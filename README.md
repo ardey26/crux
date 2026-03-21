@@ -88,7 +88,7 @@ Add the following to your project's `.claude/settings.json`. Replace `/path/to/c
 }
 ```
 
-The SessionStart hook starts a single long-lived daemon on `/tmp/crux.sock` (or resumes the existing one). The PreToolUse hook surfaces stale beliefs and pending invalidations before each tool call. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. All sessions share the same daemon, which is how cross-session belief persistence works.
+The SessionStart hook starts a single long-lived daemon on `/tmp/crux.sock` (or resumes the existing one) and immediately surfaces any stale beliefs from previous sessions -- so the agent knows what assumptions are invalid before it does anything. The PreToolUse hook surfaces stale beliefs and pending invalidations before each tool call. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. All sessions share the same daemon, which is how cross-session belief persistence works.
 
 The daemon shuts itself down after 30 minutes of inactivity (configurable via `--idle-timeout`).
 

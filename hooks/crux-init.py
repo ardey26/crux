@@ -18,6 +18,7 @@ import time
 try:
     import msgpack
 except ImportError:
+    print("[crux] msgpack not installed - run: pip install msgpack")
     sys.exit(0)
 
 def _resolve_daemon_bin() -> str:
@@ -129,21 +130,30 @@ def main():
 
     if not daemon_running():
         if not start_daemon():
-            sys.exit(0)
+            print("[crux] daemon unavailable - beliefs not tracked")
+            return
 
     success = send_run_start(run_id)
 
-    if success:
-        # Query for stale beliefs from previous sessions
-        stale_summary = get_stale_summary()
-        if stale_summary:
-            print(json.dumps({"reason": f"[crux] world model active ({cwd}) | {stale_summary}"}))
-        else:
-            print(json.dumps({"reason": f"[crux] world model active ({cwd}) | all beliefs valid"}))
+    if not success:
+        print("[crux] failed to connect to daemon")
+        return
+
+    # Query for stale beliefs from previous sessions
+    stale_summary = get_stale_summary()
+    if stale_summary:
+        print(f"""[crux] Stale beliefs detected from previous sessions:
+{stale_summary}
+
+INVALIDATED = file changed since last read. Re-read before relying on assumptions.
+uncertain = may have changed (TTL expired). Re-read if relevant to current task.
+If a plan depends on invalidated files, re-read those files and decide if the plan still holds.""")
+    else:
+        print("[crux] all beliefs valid - no stale context from previous sessions")
 
 
 def get_stale_summary() -> str:
-    """Query daemon for all stale beliefs and return a summary string."""
+    """Query daemon for all stale beliefs and return actionable warnings."""
     s = None
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -163,28 +173,102 @@ def get_stale_summary() -> str:
         if not stale:
             return ""
 
-        # Categorize by type and status
-        by_type: dict[str, list] = {}
-        for b in stale:
-            bt = b.get("belief_type", "unknown")
-            by_type.setdefault(bt, []).append(b)
-
-        invalidated = [b for b in stale if b.get("status") == "invalidated"]
-        uncertain = [b for b in stale if b.get("status") == "uncertain"]
-
-        parts = []
-        if invalidated:
-            parts.append(f"{len(invalidated)} invalidated")
-        if uncertain:
-            parts.append(f"{len(uncertain)} uncertain")
-
-        type_summary = ", ".join(f"{len(v)} {k}" for k, v in by_type.items())
-        return f"{len(stale)} stale beliefs ({', '.join(parts)}): {type_summary}"
+        return format_stale_warnings(stale)
     except Exception:
         return ""
     finally:
         if s:
             s.close()
+
+
+def format_stale_warnings(stale: list) -> str:
+    """Format stale beliefs into actionable warnings."""
+    # Separate by status priority: invalidated first, then uncertain
+    invalidated = [b for b in stale if b.get("status") == "invalidated"]
+    uncertain = [b for b in stale if b.get("status") == "uncertain"]
+
+    warnings = []
+
+    # Format invalidated beliefs (most critical)
+    for b in invalidated:
+        warning = format_belief_warning(b, "INVALIDATED")
+        if warning:
+            warnings.append(warning)
+
+    # Format uncertain beliefs (stale but not confirmed changed)
+    for b in uncertain:
+        warning = format_belief_warning(b, "uncertain")
+        if warning:
+            warnings.append(warning)
+
+    if not warnings:
+        return f"{len(stale)} stale beliefs (no actionable details)"
+
+    # Limit to most important warnings to avoid noise
+    max_warnings = 5
+    if len(warnings) > max_warnings:
+        shown = warnings[:max_warnings]
+        remaining = len(warnings) - max_warnings
+        shown.append(f"  ... and {remaining} more")
+        return "\n".join(shown)
+
+    return "\n".join(warnings)
+
+
+def format_belief_warning(belief: dict, status_label: str) -> str:
+    """Format a single belief into an actionable warning line."""
+    belief_type = belief.get("belief_type", "unknown")
+    identity_key = belief.get("identity_key")
+    dependents = belief.get("dependents", [])
+
+    if not identity_key:
+        return ""
+
+    # Shorten file paths for readability
+    display_key = shorten_path(identity_key) if belief_type == "file" else identity_key
+
+    # Format the source
+    if belief_type == "file":
+        source = f"file:{display_key}"
+    elif belief_type == "shell_output":
+        # Truncate long commands
+        cmd = identity_key[:40] + "..." if len(identity_key) > 40 else identity_key
+        source = f"cmd:`{cmd}`"
+    elif belief_type == "plan":
+        source = f"plan:{identity_key}"
+    else:
+        source = f"{belief_type}:{display_key}"
+
+    # Format dependents
+    if dependents:
+        dep_strs = []
+        for dep in dependents[:3]:  # Limit to 3 dependents
+            dep_type = dep.get("belief_type", "?")
+            dep_key = dep.get("identity_key", "?")
+            if dep_type == "plan":
+                dep_strs.append(f"plan:{dep_key}")
+            elif dep_type == "file":
+                dep_strs.append(f"file:{shorten_path(dep_key)}")
+            else:
+                dep_strs.append(f"{dep_type}:{dep_key[:20]}")
+
+        if len(dependents) > 3:
+            dep_strs.append(f"+{len(dependents) - 3} more")
+
+        return f"  [{status_label}] {source} -> affects {', '.join(dep_strs)}"
+    else:
+        return f"  [{status_label}] {source}"
+
+
+def shorten_path(path: str) -> str:
+    """Shorten a file path for display."""
+    if not path:
+        return path
+    # If path is long, show just filename or last 2 components
+    parts = path.split("/")
+    if len(parts) <= 2:
+        return path
+    return "/".join(parts[-2:])
 
 
 if __name__ == "__main__":
