@@ -1,0 +1,29 @@
+{
+  "description": "Crux world model — auto-starts daemon and registers Read/Write/Edit/Bash as observations",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/crux-init.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/crux-hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
