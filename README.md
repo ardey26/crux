@@ -12,6 +12,30 @@ The part that goes beyond versioning is the dependency graph. Git doesn't know t
 
 Without Crux, an agent that read `config.json` at step 5 and wrote code based on it at step 10 has no way to know that `config.json` was changed at step 8 by a git pull. With Crux, the agent gets told immediately.
 
+## Why it matters
+
+**Session 1: Planning**
+- You ask your agent to plan a feature
+- Agent reads `src/types.rs`, `src/graph.rs`, understands the codebase
+- Agent creates a plan: "Add field X to BeliefNode, update ingest(), update handle_stale()"
+- Crux records: plan depends on those file reads
+
+**You go to lunch. Coworker pushes a refactor.**
+
+**Session 2: Implementation**
+- New agent starts
+- SessionStart hook fires: `plan:add-field-x is stale — file:src/types.rs changed`
+- Agent knows immediately: the plan was based on assumptions that no longer hold
+- Agent re-reads `src/types.rs`, sees the refactor, decides: "plan still valid" or "need to re-plan"
+
+**Without Crux:**
+- Session 2 agent has no idea Session 1 existed
+- Implements based on stale context
+- Writes code against old structure
+- Fails at compile time (if lucky) or introduces subtle bugs (if not)
+
+Crux turns "unknown unknowns" into "known unknowns." The agent doesn't guess what might have changed — it's told exactly what changed and what depends on it.
+
 ## Philosophy
 
 Crux is built on Peirce's pragmatist epistemology. Beliefs are working hypotheses about reality. They're valid until falsified by a new observation. When falsified, you update and move on. No synthesis, no transcendence. Just ground truth.
