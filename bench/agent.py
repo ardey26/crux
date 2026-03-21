@@ -659,6 +659,22 @@ def run_a3(tools: AgentTools, inject_fn: Callable | None = None) -> None:
     tools.write_file("health_check.py",
         f'CHECK_INTERVAL = {config["timeout"]} * 2\nHOST = "{config["host"]}"\n')
 
+    # With Crux: declare field-level edges so only relevant changes cascade
+    if tools._interceptor:
+        abspath = os.path.join(tools.work_dir, "config.json")
+        config_belief = tools._interceptor.world.query("file", path=abspath)
+        if config_belief:
+            cid = config_belief.id
+            # Each downstream file depends on specific fields of config.json's result payload.
+            # The result payload has: exists, hash, size. But the actual data fields are
+            # in the file content, not the belief payload. Field-level filtering works on
+            # the belief payload (hash/size/exists), not the file content.
+            #
+            # For this scenario, we use the auto-edges (which have no field filter).
+            # The test demonstrates that without field-level content awareness,
+            # Crux can't distinguish meaningful from superficial changes.
+            pass
+
     # Write tests that verify downstream values match config
     tools.write_file("tests/__init__.py", "")
     tools.write_file("tests/test_config.py", '''import sys, os, json
@@ -703,8 +719,6 @@ def test_health_check():
         inject_fn()
 
     if tools.check_stale("config.json"):
-        # Re-read and re-derive all 5 downstream files (wasteful!)
-        tools.wasted_work_count = getattr(tools, 'wasted_work_count', 0)
         config_raw = tools.read_file("config.json")
         config = json.loads(config_raw)
         tools.write_file("db_conn.py", f'HOST = "{config["host"]}"\nPORT = {config["port"]}\n')

@@ -109,13 +109,16 @@ class WorldModel:
         if "error" in resp:
             raise RuntimeError(f"rollback failed: {resp['error']}")
 
-    def add_edge(self, from_id: str, to_id: str, weight: float = 0.9) -> None:
-        resp = self._client.send({
+    def add_edge(self, from_id: str, to_id: str, weight: float = 0.9, fields: list[str] | None = None) -> None:
+        msg = {
             "type": "add_edge",
             "from": from_id,
             "to": to_id,
             "weight": weight,
-        })
+        }
+        if fields is not None:
+            msg["fields"] = fields
+        resp = self._client.send(msg)
         if "error" in resp:
             raise RuntimeError(f"add_edge failed: {resp['error']}")
 

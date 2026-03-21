@@ -116,6 +116,7 @@ fn add_edge_validates_beliefs_exist() {
         from: id1.clone(),
         to: id2.clone(),
         weight: 0.9,
+        fields: None,
     });
     assert!(result.is_ok());
     assert_eq!(graph.edges.len(), 1);
@@ -125,6 +126,7 @@ fn add_edge_validates_beliefs_exist() {
         from: "nonexistent".to_string(),
         to: id2.clone(),
         weight: 0.9,
+        fields: None,
     });
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "nonexistent");

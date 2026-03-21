@@ -30,6 +30,7 @@ fn invalidate_a_makes_b_uncertain() {
             from: id_b.clone(),
             to: id_a.clone(),
             weight: 0.9,
+            fields: None,
         })
         .unwrap();
 
@@ -70,6 +71,7 @@ fn invalidate_a_makes_b_uncertain_with_lower_weight() {
             from: id_b.clone(),
             to: id_a.clone(),
             weight: 0.8,
+            fields: None,
         })
         .unwrap();
 
@@ -108,6 +110,7 @@ fn cascading_invalidation_three_hops() {
             from: id_b.clone(),
             to: id_a.clone(),
             weight: 0.4,
+            fields: None,
         })
         .unwrap();
     // C -> 0.28 * 0.4 * 0.7 = 0.0784 < 0.3 -> invalidated
@@ -116,6 +119,7 @@ fn cascading_invalidation_three_hops() {
             from: id_c.clone(),
             to: id_b.clone(),
             weight: 0.4,
+            fields: None,
         })
         .unwrap();
 
@@ -158,6 +162,7 @@ fn cycle_protection() {
             from: id_a.clone(),
             to: id_b.clone(),
             weight: 0.8,
+            fields: None,
         })
         .unwrap();
     graph
@@ -165,6 +170,7 @@ fn cycle_protection() {
             from: id_b.clone(),
             to: id_a.clone(),
             weight: 0.8,
+            fields: None,
         })
         .unwrap();
 

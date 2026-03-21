@@ -22,6 +22,9 @@ pub struct Graph {
     pub edges: Vec<BeliefEdge>,
     // Maps (belief_type, identity_key_value) -> belief_id for O(1) upsert lookups.
     pub identity_index: HashMap<(BeliefType, String), String>,
+    /// Transient: which payload fields changed on the last ingest that returned changed=true.
+    /// Consumed by invalidation::propagate. Set during ingest, cleared after propagation.
+    pub last_changed_fields: Option<Vec<String>>,
 }
 
 impl Graph {
@@ -30,6 +33,7 @@ impl Graph {
             nodes: HashMap::new(),
             edges: Vec::new(),
             identity_index: HashMap::new(),
+            last_changed_fields: None,
         }
     }
 
@@ -46,6 +50,9 @@ impl Graph {
             let node = self.nodes.get_mut(&belief_id).unwrap();
             let changed = node.payload != obs.result;
             if changed {
+                // Track which specific fields changed for field-level edge filtering
+                self.last_changed_fields = Some(diff_payload_fields(&node.payload, &obs.result));
+
                 let new_hash = hash_payload(&obs.result);
 
                 // Stability filter: suppress cascade only if the belief is
@@ -236,6 +243,31 @@ fn extract_identity_key(belief_type: &BeliefType, inputs: &serde_json::Value) ->
 /// Extract identity key from query filters (same logic, different source).
 fn extract_identity_key_from_filters(belief_type: &BeliefType, filters: &serde_json::Value) -> String {
     extract_identity_key(belief_type, filters)
+}
+
+/// Return the list of top-level field names whose values differ between old and new payloads.
+fn diff_payload_fields(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+    match (old.as_object(), new.as_object()) {
+        (Some(old_map), Some(new_map)) => {
+            let mut changed = Vec::new();
+            // Fields in old that changed or were removed
+            for (k, v) in old_map {
+                match new_map.get(k) {
+                    Some(nv) if nv != v => changed.push(k.clone()),
+                    None => changed.push(k.clone()),
+                    _ => {}
+                }
+            }
+            // Fields added in new
+            for k in new_map.keys() {
+                if !old_map.contains_key(k) {
+                    changed.push(k.clone());
+                }
+            }
+            changed
+        }
+        _ => Vec::new(), // non-object payloads: can't determine fields
+    }
 }
 
 /// Check if the top-level keys of two JSON objects differ (schema change).

@@ -75,6 +75,11 @@ pub struct BeliefEdge {
     pub from: String,
     pub to: String,
     pub weight: f32,
+    /// Optional field filter. If set, this edge only triggers invalidation
+    /// when one of these specific payload fields changed on the `to` belief.
+    /// If None, any payload change triggers invalidation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

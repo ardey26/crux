@@ -509,10 +509,17 @@ impl Daemon {
             .and_then(|v| v.as_f64())
             .unwrap_or(1.0) as f32;
 
+        let fields = msg.get("fields").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        });
+
         let edge = BeliefEdge {
             from,
             to,
             weight,
+            fields,
         };
 
         match self.graph.add_edge(edge.clone()) {

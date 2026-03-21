@@ -119,6 +119,7 @@ fn log_survives_add_edge_and_run_end_events() {
         from: "belief-a".to_string(),
         to: "belief-b".to_string(),
         weight: 0.9,
+        fields: None,
     };
     log.append(&LogEvent::AddEdge(edge), 1001).unwrap();
 
