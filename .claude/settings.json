@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/andeus/projects/crux/hooks/crux-init.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/andeus/projects/crux/hooks/crux-hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
