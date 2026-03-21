@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crux-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python SDK for Crux -- agentic knowledge versioning"
 requires-python = ">=3.10"
 license = "MIT"
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
 ]
+readme = "README.md"
 dependencies = ["msgpack>=1.0"]
 
 [project.urls]
