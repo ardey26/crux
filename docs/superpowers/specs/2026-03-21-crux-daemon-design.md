@@ -263,7 +263,9 @@ All responses include the echoed `request_id`.
 
 ### `query_at` Behavior
 
-Replays the main log up to the given step into a temporary in-memory graph, then runs the query against it. O(n) in log entries. **`query_at` has no latency guarantee** — for a 10,000-step run this could take hundreds of milliseconds or more. It is unsuitable for the agent's hot path and should only be used for debugging or post-hoc analysis. **v2:** Periodic graph snapshots at configurable intervals to bound replay cost to O(snapshot_interval).
+**`query_at` must replay from byte 0 of the main log**, processing all event types (observations, `add_edge`, skipping `run_start`/`run_end`), until it reaches the target step number. Then it runs the query against the reconstructed temporary graph. It cannot seek via the index to the target step's offset because that would skip `add_edge` events before that offset — the reconstructed graph would have correct belief state but missing edges, making invalidation propagation silently wrong. The index is useful for knowing when to stop (what step maps to what offset), not where to start.
+
+This makes `query_at` O(n) in total log entries. **It has no latency guarantee** — for a 10,000-step run this could take hundreds of milliseconds or more. It is unsuitable for the agent's hot path and should only be used for debugging or post-hoc analysis. **v2:** Periodic graph snapshots at configurable intervals to bound replay cost to O(snapshot_interval).
 
 **`query_at` always replays the main log only, regardless of active branch state.** It is a historical view of the main timeline. There is no way to do historical queries against branch state in MVP — this is a known user-facing limitation.
 
