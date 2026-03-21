@@ -57,6 +57,7 @@ impl Graph {
                 status: BeliefStatus::Valid,
                 created_at: now,
                 updated_at: now,
+                ttl_ms: None,
             };
             self.nodes.insert(belief_id.clone(), node);
             self.identity_index.insert(lookup_key, belief_id.clone());
@@ -80,6 +81,34 @@ impl Graph {
             self.edges.push(edge);
         }
         Ok(())
+    }
+
+    /// Find all valid beliefs that have exceeded their TTL.
+    /// Returns belief IDs that should be marked uncertain.
+    pub fn find_stale(&self, now: u64) -> Vec<String> {
+        self.nodes
+            .values()
+            .filter(|node| {
+                if node.status != BeliefStatus::Valid {
+                    return false;
+                }
+                let ttl = node.ttl_ms.unwrap_or_else(|| node.belief_type.default_ttl_ms());
+                now.saturating_sub(node.updated_at) > ttl
+            })
+            .map(|node| node.id.clone())
+            .collect()
+    }
+
+    /// Mark a belief as uncertain due to TTL expiry. Returns true if the belief was valid.
+    pub fn mark_stale(&mut self, belief_id: &str) -> bool {
+        if let Some(node) = self.nodes.get_mut(belief_id) {
+            if node.status == BeliefStatus::Valid {
+                node.status = BeliefStatus::Uncertain;
+                node.confidence = 0.5;
+                return true;
+            }
+        }
+        false
     }
 
     /// Point query: find a belief by type and filters.

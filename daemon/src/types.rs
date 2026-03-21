@@ -55,6 +55,8 @@ pub struct BeliefNode {
     pub status: BeliefStatus,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Per-belief TTL override in ms. If None, uses BeliefType::default_ttl_ms().
+    pub ttl_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +114,18 @@ impl Action {
             Action::HttpGet => BeliefType::HttpEndpoint,
             Action::Shell => BeliefType::ShellOutput,
             Action::EnvRead => BeliefType::EnvVar,
+        }
+    }
+}
+
+impl BeliefType {
+    /// Default TTL in milliseconds. Volatile types expire faster.
+    pub fn default_ttl_ms(&self) -> u64 {
+        match self {
+            BeliefType::ShellOutput => 30_000,   // 30s — commands can change fast
+            BeliefType::File => 60_000,           // 60s
+            BeliefType::HttpEndpoint => 120_000,  // 2min
+            BeliefType::EnvVar => 300_000,        // 5min — env vars rarely change
         }
     }
 }

@@ -110,11 +110,17 @@ impl Daemon {
         let request_id = msg.get("request_id").cloned().unwrap_or(serde_json::Value::Null);
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
+        // Check TTLs before handling any query-type message
+        if matches!(msg_type, "query" | "diff" | "stale") {
+            self.check_ttls();
+        }
+
         let mut response = match msg_type {
             "run_start" => self.handle_run_start(&msg),
             "observe" => self.handle_observe(&msg),
             "query" => self.handle_query(&msg),
             "diff" => self.handle_diff(),
+            "stale" => self.handle_stale(),
             "query_at" => self.handle_query_at(&msg),
             "branch" => self.handle_branch(),
             "rollback" => self.handle_rollback(&msg),
@@ -262,6 +268,14 @@ impl Daemon {
 
         // Ingest into graph
         let (belief_id, changed) = self.graph.ingest(&obs);
+
+        // Apply optional TTL override
+        let ttl_override = msg.get("ttl_ms").and_then(|v| v.as_u64());
+        if let Some(ttl) = ttl_override {
+            if let Some(node) = self.graph.nodes.get_mut(&belief_id) {
+                node.ttl_ms = Some(ttl);
+            }
+        }
 
         // Compute observation-local diff if belief changed
         let obs_diff = if changed {
@@ -555,6 +569,66 @@ impl Daemon {
         self.pending_diffs.clear();
 
         serde_json::json!({"ok": true})
+    }
+
+    /// Check all valid beliefs for TTL expiry. Marks expired ones as uncertain
+    /// and adds them to the pending diff queue.
+    fn check_ttls(&mut self) {
+        let now = now_ms();
+        let stale_ids = self.graph.find_stale(now);
+        if stale_ids.is_empty() {
+            return;
+        }
+
+        let mut diff = InvalidationDiff::default();
+        for id in &stale_ids {
+            // mark_stale returns true if the belief was valid and got marked uncertain
+            if self.graph.mark_stale(id) {
+                diff.uncertain.push(UncertainBelief {
+                    id: id.clone(),
+                    was: 1.0,
+                    now: 0.5,
+                });
+            }
+        }
+
+        if !diff.uncertain.is_empty() {
+            let count = diff.uncertain.len();
+            diff.action_required = format!("{} belief(s) expired -- re-observe before acting", count);
+            self.pending_diffs.push_back(diff);
+        }
+    }
+
+    /// Return all beliefs that are past their TTL or already marked uncertain/invalidated.
+    fn handle_stale(&self) -> serde_json::Value {
+        if self.run_id.is_none() {
+            return serde_json::json!({"error": "no_active_run"});
+        }
+
+        let now = now_ms();
+        let mut stale: Vec<serde_json::Value> = Vec::new();
+
+        for node in self.graph.nodes.values() {
+            let is_expired = if node.status == BeliefStatus::Valid {
+                let ttl = node.ttl_ms.unwrap_or_else(|| node.belief_type.default_ttl_ms());
+                now.saturating_sub(node.updated_at) > ttl
+            } else {
+                false
+            };
+
+            if is_expired || node.status != BeliefStatus::Valid {
+                stale.push(serde_json::json!({
+                    "id": node.id,
+                    "belief_type": serde_json::to_value(&node.belief_type).unwrap(),
+                    "status": serde_json::to_value(&node.status).unwrap(),
+                    "confidence": node.confidence,
+                    "updated_at": node.updated_at,
+                    "ttl_expired": is_expired,
+                }));
+            }
+        }
+
+        serde_json::json!({"stale": stale})
     }
 
     /// Append an event to the active log (branch log if on a branch, main log otherwise).
