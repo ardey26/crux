@@ -242,6 +242,30 @@ cd bench && python runner.py
 
 This runs 17 scenarios with and without Crux and computes the Model Coherence Index (MCI). The benchmark uses a scripted agent that simulates realistic tool call patterns. Each task injects a state change mid-run and measures whether the agent recovers.
 
+### MCI scoring
+
+Correctness is binary: each task has a test suite, and the agent either passes or fails it. No LLM-as-judge subjectivity.
+
+```python
+if crux.tests_pass and not baseline.tests_pass:
+    correctness = +1.0  # Crux fixed it
+elif not crux.tests_pass and baseline.tests_pass:
+    correctness = -1.0  # Crux broke it
+else:
+    correctness = 0.0   # Same outcome
+
+token_ratio = crux.tokens / baseline.tokens
+
+if correctness > 0:
+    mci = correctness * (1 - overhead_penalty)  # Can't score +1 by burning 3x tokens
+elif correctness < 0:
+    mci = -1.0
+else:
+    mci = efficiency_delta  # Same correctness → score based on token cost
+```
+
+The overhead penalty keeps adversarial scenarios honest: even if Crux eventually gets the right answer, burning extra tokens on false cascades scores negative.
+
 The benchmark includes adversarial scenarios that show where Crux hurts or can't help:
 
 | Scenario | MCI | What it tests |
