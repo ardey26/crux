@@ -10,7 +10,7 @@ Crux tracks what an AI agent believes about the world and tells it when those be
 pip install crux-sdk
 ```
 
-You also need the [crux-daemon binary](https://github.com/ardey26/crux/releases).
+The daemon binary downloads automatically on first use. No Rust toolchain needed.
 
 ## Quick start
 

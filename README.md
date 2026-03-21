@@ -35,7 +35,9 @@ This is the entire model. Observe, believe, falsify, update. The belief graph is
 pip install crux-sdk
 ```
 
-Download the daemon binary from the [latest release](https://github.com/ardey26/crux/releases), or build from source:
+That's it. The daemon binary downloads automatically on first use (cached at `~/.crux/bin/`). No Rust toolchain needed.
+
+To build from source instead:
 
 ```
 make build    # builds daemon/target/release/crux-daemon
@@ -48,7 +50,7 @@ make install  # also installs the Python SDK and crux-observe CLI
 crux-daemon --socket-path /tmp/crux.sock
 ```
 
-The daemon listens on the given Unix socket. It stores event logs in `~/.crux/runs/`.
+The daemon listens on the given Unix socket. It stores event logs in `~/.crux/runs/`. If you're using the Claude Code hooks or the SDK, the daemon starts automatically -- you don't need to run it manually.
 
 ### Set up Claude Code integration
 
