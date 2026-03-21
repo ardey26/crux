@@ -8,25 +8,43 @@ from .world import WorldModel
 
 
 class CruxInterceptor:
-    """Wraps common tool calls and automatically observes them in the world model."""
+    """Wraps common tool calls and automatically observes them in the world model.
+
+    Auto-creates dependency edges: when a write follows reads, the written
+    file depends on all recently-read files. No manual wiring needed.
+    """
 
     def __init__(self, world: WorldModel):
         self.world = world
+        self._recent_reads: dict[str, str] = {}  # {path: belief_id}
+
+    def _record_read(self, path: str, belief_id: str) -> None:
+        self._recent_reads[path] = belief_id
+
+    def _create_auto_edges(self, write_belief_id: str, write_path: str) -> None:
+        for read_path, read_belief_id in self._recent_reads.items():
+            if read_path == write_path:
+                continue
+            try:
+                self.world.add_edge(write_belief_id, read_belief_id, weight=0.9)
+            except RuntimeError:
+                pass  # belief may have been invalidated/removed
+        self._recent_reads.clear()
 
     def read_file(self, path: str) -> str:
         abspath = os.path.abspath(path)
         try:
-            # Read as bytes for hashing (handles binary files)
             with open(abspath, "rb") as f:
                 raw = f.read()
             h = hashlib.sha256(raw).hexdigest()[:8]
             size = len(raw)
-            self.world.observe(
+            diff, belief_id = self.world.observe(
                 "read_file",
                 {"path": abspath},
                 {"exists": True, "hash": h, "size": size},
             )
-            # Return as text (callers expect str)
+            if belief_id:
+                self._record_read(abspath, belief_id)
             return raw.decode("utf-8", errors="replace")
         except FileNotFoundError:
             self.world.observe(
@@ -43,11 +61,13 @@ class CruxInterceptor:
             f.write(content)
         h = hashlib.sha256(content.encode()).hexdigest()[:8]
         size = len(content.encode())
-        self.world.observe(
+        diff, belief_id = self.world.observe(
             "read_file",
             {"path": abspath},
             {"exists": True, "hash": h, "size": size},
         )
+        if belief_id:
+            self._create_auto_edges(belief_id, abspath)
 
     def run_shell(self, command: str) -> tuple[str, int]:
         result = subprocess.run(

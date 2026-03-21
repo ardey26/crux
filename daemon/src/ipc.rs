@@ -284,6 +284,7 @@ impl Daemon {
         match obs_diff {
             Some(diff) => serde_json::json!({
                 "ok": true,
+                "belief_id": belief_id,
                 "diff": {
                     "invalidated": diff.invalidated,
                     "uncertain": diff.uncertain.iter().map(|u| serde_json::json!({
@@ -294,7 +295,7 @@ impl Daemon {
                     "action_required": diff.action_required,
                 }
             }),
-            None => serde_json::json!({"ok": true, "diff": null}),
+            None => serde_json::json!({"ok": true, "belief_id": belief_id, "diff": null}),
         }
     }
 

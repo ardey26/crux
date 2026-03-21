@@ -7,7 +7,7 @@ def test_observe_query_diff_cycle(daemon):
     """Step 6 test: full observe -> query -> diff cycle against live daemon."""
     with WorldModel(socket_path=daemon) as world:
         # Observe a file
-        diff = world.observe(
+        diff, belief_id = world.observe(
             "read_file",
             {"path": "/config.json"},
             {"exists": True, "hash": "abc123", "size": 100},
@@ -37,7 +37,7 @@ def test_observe_query_diff_cycle(daemon):
         # Re-observe config with changed hash — should trigger warning
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            diff = world.observe(
+            diff, _ = world.observe(
                 "read_file",
                 {"path": "/config.json"},
                 {"exists": True, "hash": "CHANGED", "size": 100},

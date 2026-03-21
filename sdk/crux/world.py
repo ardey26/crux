@@ -35,7 +35,8 @@ class WorldModel:
         result: dict,
         status: str = "success",
         step: int | None = None,
-    ) -> InvalidationDiff | None:
+    ) -> tuple[InvalidationDiff | None, str]:
+        """Observe an action. Returns (diff_or_none, belief_id)."""
         if step is None:
             self._step += 1
             step = self._step
@@ -68,11 +69,12 @@ class WorldModel:
         if "error" in resp:
             raise RuntimeError(f"observe failed: {resp['error']}")
 
+        belief_id = resp.get("belief_id", "")
         diff = InvalidationDiff.from_dict(resp.get("diff"))
         if not diff.is_empty():
             warnings.warn(BeliefInvalidatedWarning(diff))
-            return diff
-        return None
+            return diff, belief_id
+        return None, belief_id
 
     def query(self, belief_type: str, **filters) -> BeliefNode | None:
         resp = self._client.send({

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Claude Code PostToolUse hook — bridges tool calls to Crux observations.
+"""Claude Code PostToolUse hook -- bridges tool calls to Crux observations.
 
-Receives tool call data on stdin as JSON, extracts file paths and results,
-sends observations to the Crux daemon.
+Auto-creates dependency edges: when a Write/Edit follows Reads, the written
+file automatically depends on all recently-read files. No manual wiring.
 
 Stdin format (from Claude Code):
 {
@@ -14,9 +14,9 @@ Stdin format (from Claude Code):
 }
 
 Exit codes:
-    0 — success (stdout shown in transcript if non-empty)
-    2 — blocking error (stderr fed back to Claude)
-    other — non-blocking error (logged)
+    0 -- success (stdout shown in transcript if non-empty)
+    2 -- blocking error (stderr fed back to Claude)
+    other -- non-blocking error (logged)
 """
 
 import hashlib
@@ -29,19 +29,17 @@ import sys
 try:
     import msgpack
 except ImportError:
-    # If msgpack isn't installed, skip silently — don't break Claude Code
     sys.exit(0)
 
 SOCKET_PATH = os.environ.get("CRUX_SOCKET", "")
 
 if not SOCKET_PATH:
-    # Find the most recent crux socket if env var not set
     import glob
     socks = sorted(glob.glob("/tmp/crux-*.sock"), key=os.path.getmtime, reverse=True)
     SOCKET_PATH = socks[0] if socks else "/tmp/crux.sock"
 
 
-def send_observation(msg: dict) -> dict | None:
+def send_msg(msg: dict) -> dict | None:
     """Send a msgpack-framed message to the daemon and get the response."""
     sock = None
     try:
@@ -56,7 +54,6 @@ def send_observation(msg: dict) -> dict | None:
         resp_data = _recv_exact(sock, resp_len)
         return msgpack.unpackb(resp_data, raw=False)
     except Exception:
-        # Daemon not running, network error, corrupt response — skip silently
         return None
     finally:
         if sock:
@@ -77,28 +74,39 @@ def hash8(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:8]
 
 
-def handle_read(tool_input: dict, tool_result: str) -> dict | None:
-    """Handle Read tool — register file belief.
+# -- State file for tracking recent reads across hook invocations --
 
-    Reads the file from disk to hash it, matching the SDK's interceptor behavior.
-    We don't hash tool_result because it includes cat -n line number prefixes.
-    """
-    path = tool_input.get("file_path", "")
-    if not path:
-        return None
+def state_path(session_id: str) -> str:
+    return f"/tmp/crux-edges-{session_id[:16]}.json"
 
+
+def load_recent_reads(session_id: str) -> dict:
+    """Load {path: belief_id} map of recently-read files."""
+    try:
+        with open(state_path(session_id)) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_recent_reads(session_id: str, reads: dict) -> None:
+    with open(state_path(session_id), "w") as f:
+        json.dump(reads, f)
+
+
+# -- Observation builders --
+
+def observe_file_read(path: str) -> dict | None:
     path = os.path.abspath(path)
-
     try:
         with open(path, "rb") as f:
             raw = f.read()
         h = hashlib.sha256(raw).hexdigest()[:8]
-        size = len(raw)
         return {
             "type": "observe",
             "action": "read_file",
             "inputs": {"path": path},
-            "result": {"exists": True, "hash": h, "size": size},
+            "result": {"exists": True, "hash": h, "size": len(raw)},
             "status": "success",
         }
     except (FileNotFoundError, IsADirectoryError):
@@ -111,68 +119,45 @@ def handle_read(tool_input: dict, tool_result: str) -> dict | None:
         }
 
 
-def handle_write(tool_input: dict, tool_result: str) -> dict | None:
-    """Handle Write tool — register file belief with new content."""
-    path = tool_input.get("file_path", "")
-    content = tool_input.get("content", "")
-    if not path:
-        return None
-
+def observe_file_write(path: str, content: str) -> dict:
     path = os.path.abspath(path)
     h = hash8(content)
-    size = len(content.encode())
-
     return {
         "type": "observe",
         "action": "read_file",
         "inputs": {"path": path},
-        "result": {"exists": True, "hash": h, "size": size},
+        "result": {"exists": True, "hash": h, "size": len(content.encode())},
         "status": "success",
     }
 
 
-def handle_edit(tool_input: dict, tool_result: str) -> dict | None:
-    """Handle Edit tool — re-read the file to get its new state."""
-    path = tool_input.get("file_path", "")
-    if not path:
-        return None
-
+def observe_file_edit(path: str) -> dict | None:
     path = os.path.abspath(path)
-
     try:
         with open(path, "rb") as f:
             raw = f.read()
         h = hashlib.sha256(raw).hexdigest()[:8]
-        size = len(raw)
         return {
             "type": "observe",
             "action": "read_file",
             "inputs": {"path": path},
-            "result": {"exists": True, "hash": h, "size": size},
+            "result": {"exists": True, "hash": h, "size": len(raw)},
             "status": "success",
         }
     except (FileNotFoundError, IsADirectoryError, OSError):
         return None
 
 
-def handle_bash(tool_input: dict, tool_result: str) -> dict | None:
-    """Handle Bash tool — register shell_output belief."""
-    command = tool_input.get("command", "")
-    if not command:
-        return None
-
+def observe_bash(command: str, tool_result: str) -> dict:
     h = hash8(tool_result) if tool_result else ""
-    # Infer exit code: if tool_result contains "Exit code" it failed
     exit_code = 0
     if tool_result and "Exit code" in tool_result:
         try:
-            # Claude Code format: "Exit code N\n..."
             first_line = tool_result.strip().split("\n")[0]
             if "Exit code" in first_line:
                 exit_code = int(first_line.split("Exit code")[1].strip())
         except (ValueError, IndexError):
             pass
-
     return {
         "type": "observe",
         "action": "shell",
@@ -182,8 +167,32 @@ def handle_bash(tool_input: dict, tool_result: str) -> dict | None:
     }
 
 
+# -- Auto-edge creation --
+
+def create_auto_edges(new_belief_id: str, new_path: str, recent_reads: dict) -> int:
+    """Create edges from the written file to all recently-read files.
+
+    Edge direction: written file (from) DEPENDS ON read files (to).
+    Skips self-edges (read then edit same file).
+    Returns number of edges created.
+    """
+    created = 0
+    for read_path, read_belief_id in recent_reads.items():
+        if read_path == new_path:
+            continue
+        resp = send_msg({
+            "type": "add_edge",
+            "from": new_belief_id,
+            "to": read_belief_id,
+            "weight": 0.9,
+            "request_id": f"auto-edge-{created}",
+        })
+        if resp and resp.get("ok"):
+            created += 1
+    return created
+
+
 def main():
-    # Read hook input from stdin
     try:
         raw = sys.stdin.read()
         if not raw.strip():
@@ -195,32 +204,69 @@ def main():
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
     tool_result = data.get("tool_result", "")
+    session_id = data.get("session_id", "unknown")
 
-    # Convert tool_result to string if it's not already
     if not isinstance(tool_result, str):
         tool_result = json.dumps(tool_result) if tool_result else ""
 
-    # Map tool names to handlers
-    handlers = {
-        "Read": handle_read,
-        "Write": handle_write,
-        "Edit": handle_edit,
-        "Bash": handle_bash,
-    }
+    # Build observation message
+    msg = None
+    path = None
+    is_write = False
 
-    handler = handlers.get(tool_name)
-    if handler is None:
+    if tool_name == "Read":
+        path = tool_input.get("file_path", "")
+        if path:
+            msg = observe_file_read(path)
+    elif tool_name == "Write":
+        path = tool_input.get("file_path", "")
+        content = tool_input.get("content", "")
+        if path:
+            msg = observe_file_write(path, content)
+            is_write = True
+    elif tool_name == "Edit":
+        path = tool_input.get("file_path", "")
+        if path:
+            msg = observe_file_edit(path)
+            is_write = True
+    elif tool_name == "Bash":
+        command = tool_input.get("command", "")
+        if command:
+            msg = observe_bash(command, tool_result)
+    else:
         sys.exit(0)
 
-    msg = handler(tool_input, tool_result)
     if msg is None:
         sys.exit(0)
 
-    resp = send_observation(msg)
+    # Send observation to daemon
+    resp = send_msg(msg)
     if resp is None:
         sys.exit(0)
 
-    # If invalidations were triggered, output a warning for Claude to see
+    belief_id = resp.get("belief_id", "")
+    if not belief_id:
+        sys.exit(0)
+
+    # Auto-edge logic
+    recent_reads = load_recent_reads(session_id)
+
+    if is_write and path:
+        abs_path = os.path.abspath(path)
+        edges_created = create_auto_edges(belief_id, abs_path, recent_reads)
+        # Clear reads after write -- next write starts fresh
+        save_recent_reads(session_id, {})
+    elif tool_name == "Read" and path:
+        abs_path = os.path.abspath(path)
+        recent_reads[abs_path] = belief_id
+        save_recent_reads(session_id, recent_reads)
+        edges_created = 0
+    else:
+        edges_created = 0
+
+    # Output warnings for invalidations
+    output_parts = []
+
     diff = resp.get("diff")
     if diff and (diff.get("invalidated") or diff.get("uncertain")):
         n_invalid = len(diff.get("invalidated", []))
@@ -230,8 +276,13 @@ def main():
             parts.append(f"{n_invalid} belief(s) invalidated")
         if n_uncertain:
             parts.append(f"{n_uncertain} belief(s) uncertain")
-        warning = f"[crux] {', '.join(parts)} — {diff.get('action_required', 'check world model')}"
-        print(json.dumps({"reason": warning}))
+        output_parts.append(f"[crux] {', '.join(parts)}")
+
+    if edges_created > 0:
+        output_parts.append(f"[crux] auto-linked {edges_created} dependency edge(s)")
+
+    if output_parts:
+        print(json.dumps({"reason": " | ".join(output_parts)}))
 
 
 if __name__ == "__main__":
