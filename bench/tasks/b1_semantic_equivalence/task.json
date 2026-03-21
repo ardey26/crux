@@ -1,0 +1,7 @@
+{
+  "id": "b1",
+  "name": "Semantic Equivalence",
+  "inject_step": 5,
+  "inject_file": "config.yaml",
+  "inject_content": "timeout: 30s\nretries: 3\n"
+}

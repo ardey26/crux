@@ -1,0 +1,6 @@
+{
+  "id": "b2",
+  "name": "Unmodeled External Dependency",
+  "inject_step": 8,
+  "inject_type": "rate_limit"
+}

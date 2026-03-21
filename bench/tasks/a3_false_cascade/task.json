@@ -1,0 +1,7 @@
+{
+  "id": "a3",
+  "name": "False Cascade",
+  "inject_step": 10,
+  "inject_file": "config.json",
+  "inject_content": "{\"timeout\": 30, \"retries\": 3, \"host\": \"db.example.com\", \"port\": 5432, \"description\": \"updated docs\"}"
+}

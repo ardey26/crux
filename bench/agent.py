@@ -609,6 +609,376 @@ def get_counter():
     tools.run_shell("python -m pytest tests/ -q --tb=short")
 
 
+# ===========================================================================
+# ADVERSARIAL SCENARIOS — Category A: Crux Makes Things Worse
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# A1: Static Task Overhead
+# Zero drift, zero dependencies. Measures Crux's minimum tax.
+# ---------------------------------------------------------------------------
+
+def run_a1(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    content = tools.read_file("article.md")
+    # Write a simple summary
+    lines = content.strip().split("\n")
+    summary_lines = [l for l in lines if l.strip() and not l.startswith("#")]
+    summary = " ".join(summary_lines[:3])
+    tools.write_file("summary.txt", summary)
+
+
+# ---------------------------------------------------------------------------
+# A2: Write-Heavy Logging
+# 50 sequential writes to a single file. Pure write-path overhead.
+# ---------------------------------------------------------------------------
+
+def run_a2(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    entries = []
+    for i in range(50):
+        entries.append(f"[{i:04d}] Log entry {i}: operation completed successfully")
+        tools.write_file("log.txt", "\n".join(entries) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# A3: False Cascade
+# Config has 20 fields. 5 downstream beliefs depend on specific fields.
+# Injection changes an unrelated field ("description"). Hash changes.
+# All 5 downstream beliefs invalidate and re-derive identically.
+# ---------------------------------------------------------------------------
+
+def run_a3(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    config_raw = tools.read_file("config.json")
+    config = json.loads(config_raw)
+
+    # Write 5 downstream files that depend on specific config fields
+    tools.write_file("db_conn.py", f'HOST = "{config["host"]}"\nPORT = {config["port"]}\n')
+    tools.write_file("retry_policy.py", f'MAX_RETRIES = {config["retries"]}\n')
+    tools.write_file("timeout_config.py", f'TIMEOUT = {config["timeout"]}\n')
+    tools.write_file("connection_string.py",
+        f'DSN = "postgres://{config["host"]}:{config["port"]}/mydb"\n')
+    tools.write_file("health_check.py",
+        f'CHECK_INTERVAL = {config["timeout"]} * 2\nHOST = "{config["host"]}"\n')
+
+    # Write tests that verify downstream values match config
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_config.py", '''import sys, os, json
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def _load_config():
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")) as f:
+        return json.load(f)
+
+def test_db_conn():
+    from db_conn import HOST, PORT
+    c = _load_config()
+    assert HOST == c["host"]
+    assert PORT == c["port"]
+
+def test_retry():
+    from retry_policy import MAX_RETRIES
+    c = _load_config()
+    assert MAX_RETRIES == c["retries"]
+
+def test_timeout():
+    from timeout_config import TIMEOUT
+    c = _load_config()
+    assert TIMEOUT == c["timeout"]
+
+def test_connection_string():
+    from connection_string import DSN
+    c = _load_config()
+    assert c["host"] in DSN
+    assert str(c["port"]) in DSN
+
+def test_health_check():
+    from health_check import HOST
+    c = _load_config()
+    assert HOST == c["host"]
+''')
+
+    for i in range(6, 11):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("config.json"):
+        # Re-read and re-derive all 5 downstream files (wasteful!)
+        tools.wasted_work_count = getattr(tools, 'wasted_work_count', 0)
+        config_raw = tools.read_file("config.json")
+        config = json.loads(config_raw)
+        tools.write_file("db_conn.py", f'HOST = "{config["host"]}"\nPORT = {config["port"]}\n')
+        tools.write_file("retry_policy.py", f'MAX_RETRIES = {config["retries"]}\n')
+        tools.write_file("timeout_config.py", f'TIMEOUT = {config["timeout"]}\n')
+        tools.write_file("connection_string.py",
+            f'DSN = "postgres://{config["host"]}:{config["port"]}/mydb"\n')
+        tools.write_file("health_check.py",
+            f'CHECK_INTERVAL = {config["timeout"]} * 2\nHOST = "{config["host"]}"\n')
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
+# ---------------------------------------------------------------------------
+# A4: Thrashing Belief
+# Status alternates up/down 10 times. 3 downstream beliefs re-derive each time.
+# Final state = initial state. Maximum work, zero net progress.
+# ---------------------------------------------------------------------------
+
+def run_a4(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    status = tools.read_file("status.txt").strip()
+
+    tools.write_file("report.txt", f"Service status: {status}\n")
+    tools.write_file("alert.py", f'STATUS = "{status}"\nALERT = STATUS == "down"\n')
+    tools.write_file("dashboard.py", f'CURRENT_STATUS = "{status}"\n')
+
+    if inject_fn:
+        inject_fn()
+
+    # After thrashing, re-read and re-derive
+    if tools.check_stale("status.txt"):
+        status = tools.read_file("status.txt").strip()
+        tools.write_file("report.txt", f"Service status: {status}\n")
+        tools.write_file("alert.py", f'STATUS = "{status}"\nALERT = STATUS == "down"\n')
+        tools.write_file("dashboard.py", f'CURRENT_STATUS = "{status}"\n')
+
+
+# ===========================================================================
+# ADVERSARIAL SCENARIOS — Category B: Crux Can't Help
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# B1: Semantic Equivalence, Different Hash
+# "timeout: 30" -> "timeout: 30s". Functionally identical, hash differs.
+# Downstream re-derives for no reason.
+# ---------------------------------------------------------------------------
+
+def run_b1(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    config_raw = tools.read_file("config.yaml")
+    # Parse YAML-like config (simple key: value)
+    config = {}
+    for line in config_raw.strip().split("\n"):
+        if ":" in line:
+            k, v = line.split(":", 1)
+            v = v.strip()
+            # Strip units for numeric parsing
+            numeric = ''.join(c for c in v if c.isdigit())
+            try:
+                config[k.strip()] = int(numeric) if numeric else v
+            except ValueError:
+                config[k.strip()] = v
+
+    tools.write_file("settings.py",
+        f'TIMEOUT = {config.get("timeout", 30)}\nRETRIES = {config.get("retries", 3)}\n')
+
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_settings.py", '''import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def _parse_config():
+    d = {}
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")) as f:
+        for line in f:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                v = v.strip()
+                numeric = "".join(c for c in v if c.isdigit())
+                try:
+                    d[k.strip()] = int(numeric) if numeric else v
+                except ValueError:
+                    d[k.strip()] = v
+    return d
+
+def test_timeout():
+    from settings import TIMEOUT
+    c = _parse_config()
+    assert TIMEOUT == c["timeout"]
+
+def test_retries():
+    from settings import RETRIES
+    c = _parse_config()
+    assert RETRIES == c["retries"]
+''')
+
+    for i in range(3, 6):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("config.yaml"):
+        config_raw = tools.read_file("config.yaml")
+        config = {}
+        for line in config_raw.strip().split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                v = v.strip()
+                numeric = ''.join(c for c in v if c.isdigit())
+                try:
+                    config[k.strip()] = int(numeric) if numeric else v
+                except ValueError:
+                    config[k.strip()] = v
+        tools.write_file("settings.py",
+            f'TIMEOUT = {config.get("timeout", 30)}\nRETRIES = {config.get("retries", 3)}\n')
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
+# ---------------------------------------------------------------------------
+# B2: Unmodeled External Dependency
+# Agent calls an API that starts returning 429 at step 8.
+# No belief tracks rate limit state. Crux can't help.
+# ---------------------------------------------------------------------------
+
+def run_b2(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    # Simulate API calls
+    api_available = True
+
+    tools.write_file("api_client.py", '''def fetch_data():
+    return {"items": [{"id": 1}, {"id": 2}, {"id": 3}]}
+''')
+
+    for i in range(1, 9):
+        tools.run_shell(f"echo 'API call {i}'")
+
+    if inject_fn:
+        inject_fn()
+        api_available = False
+
+    # After "rate limit", agent tries to use API
+    if api_available:
+        tools.write_file("output.json", '{"items": [{"id": 1}, {"id": 2}, {"id": 3}]}')
+    else:
+        # Agent doesn't know about rate limit, tries anyway
+        # Simulate: write partial/error output
+        tools.write_file("output.json", '{"error": "rate_limited", "items": []}')
+
+
+# ---------------------------------------------------------------------------
+# B3: Conflicting Sources
+# File says stock=5, API says stock=0. Last-write-wins is wrong.
+# ---------------------------------------------------------------------------
+
+def run_b3(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    inv_raw = tools.read_file("inventory.json")
+    inv = json.loads(inv_raw)
+    stock = inv["stock"]
+
+    tools.write_file("reorder.py", f'''STOCK = {stock}
+REORDER_THRESHOLD = 3
+SHOULD_REORDER = STOCK < REORDER_THRESHOLD
+''')
+
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_reorder.py", '''import sys, os, json
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def test_reorder_matches_inventory():
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "inventory.json")) as f:
+        inv = json.load(f)
+    from reorder import STOCK
+    assert STOCK == inv["stock"], f"stale stock: got {STOCK}, expected {inv['stock']}"
+''')
+
+    for i in range(3, 7):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("inventory.json"):
+        inv_raw = tools.read_file("inventory.json")
+        inv = json.loads(inv_raw)
+        stock = inv["stock"]
+        tools.write_file("reorder.py", f'''STOCK = {stock}
+REORDER_THRESHOLD = 3
+SHOULD_REORDER = STOCK < REORDER_THRESHOLD
+''')
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
+# ---------------------------------------------------------------------------
+# B4: Latent Dependency Discovery
+# README and CHANGELOG are semantically linked but Crux sees no edge.
+# README changes to reference CHANGELOG content. Summary becomes stale.
+# ---------------------------------------------------------------------------
+
+def run_b4(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    readme = tools.read_file("README.md")
+    changelog = tools.read_file("CHANGELOG.md")
+
+    # Write summaries based on each file independently
+    tools.write_file("summary.txt", f"Project summary: {readme.strip().split(chr(10))[0]}\n")
+    tools.write_file("release_notes.txt",
+        f"Release notes: {changelog.strip()}\n")
+
+    for i in range(3, 6):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    # Only README changed. Crux flags README as stale.
+    # But summary.txt and release_notes.txt are independent beliefs.
+    # The semantic dependency (README now references CHANGELOG) is invisible.
+    if tools.check_stale("README.md"):
+        readme = tools.read_file("README.md")
+        tools.write_file("summary.txt", f"Project summary: {readme.strip().split(chr(10))[0]}\n")
+        # Agent does NOT re-read CHANGELOG or update release_notes.txt
+        # because Crux sees no edge between them.
+        # The summary now mentions v2 but release_notes was already correct.
+
+
+# ---------------------------------------------------------------------------
+# B5: Stale Plan, Fresh Beliefs
+# Agent makes a plan based on requirements.txt. Requirements change.
+# Crux updates the belief but the plan (steps 3-5) is already committed.
+# ---------------------------------------------------------------------------
+
+def run_b5(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    reqs_raw = tools.read_file("requirements.txt")
+    packages = [l.strip() for l in reqs_raw.strip().split("\n") if l.strip()]
+
+    # "Plan": install each package, write an import test for each
+    # The plan is derived from the initial requirements
+    plan = packages[:]
+
+    # Execute plan steps 1-2: write setup
+    tools.write_file("app.py", "# App module\n" +
+        "\n".join(f"# Uses {p.split('==')[0]}" for p in plan) + "\n")
+
+    tools.write_file("tests/__init__.py", "")
+
+    for i in range(3, 9):
+        tools.run_shell(f"echo 'plan step {i}'")
+
+    if inject_fn:
+        inject_fn()
+
+    # Crux detects requirements.txt changed
+    if tools.check_stale("requirements.txt"):
+        # Agent re-reads requirements but does NOT re-plan
+        reqs_raw = tools.read_file("requirements.txt")
+        new_packages = [l.strip() for l in reqs_raw.strip().split("\n") if l.strip()]
+        # Agent continues with OLD plan (plan variable is stale)
+        # This is the bug: plan != new_packages
+
+    # Execute remaining plan steps using the (possibly stale) plan
+    test_code = '''import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def test_all_packages_referenced():
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "requirements.txt")) as f:
+        packages = [l.strip().split("==")[0] for l in f if l.strip()]
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "app.py")) as f:
+        app_content = f.read()
+    for pkg in packages:
+        assert pkg in app_content, f"app.py missing reference to {pkg}"
+'''
+    tools.write_file("tests/test_plan.py", test_code)
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
 TASK_AGENTS = {
     "task_01": run_task_01,
     "task_02": run_task_02,
@@ -618,4 +988,13 @@ TASK_AGENTS = {
     "task_06": run_task_06,
     "task_07": run_task_07,
     "task_08": run_task_08,
+    "a1": run_a1,
+    "a2": run_a2,
+    "a3": run_a3,
+    "a4": run_a4,
+    "b1": run_b1,
+    "b2": run_b2,
+    "b3": run_b3,
+    "b4": run_b4,
+    "b5": run_b5,
 }

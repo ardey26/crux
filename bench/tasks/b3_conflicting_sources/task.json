@@ -1,0 +1,7 @@
+{
+  "id": "b3",
+  "name": "Conflicting Sources",
+  "inject_step": 6,
+  "inject_file": "inventory.json",
+  "inject_content": "{\"stock\": 0}"
+}

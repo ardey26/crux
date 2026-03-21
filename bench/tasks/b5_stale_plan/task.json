@@ -1,0 +1,7 @@
+{
+  "id": "b5",
+  "name": "Stale Plan Fresh Beliefs",
+  "inject_step": 8,
+  "inject_file": "requirements.txt",
+  "inject_content": "flask==3.0\nrequests==2.32\nsqlalchemy==2.0\n"
+}

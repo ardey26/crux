@@ -1,0 +1,7 @@
+{
+  "id": "b4",
+  "name": "Latent Dependency Discovery",
+  "inject_step": 5,
+  "inject_file": "README.md",
+  "inject_content": "# Project\n\nNow supports the v2 API described in CHANGELOG.\n"
+}

@@ -13,7 +13,7 @@ import warnings
 
 from agent import AgentTools, TASK_AGENTS
 from injector import inject, load_task_config
-from scorer import TaskResult, verify_task, compute_mci
+from scorer import TaskResult, verify_task, compute_mci, format_benchmark_report
 
 BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
 TASKS_DIR = os.path.join(BENCH_DIR, "tasks")
@@ -179,6 +179,12 @@ def main():
     print(f"Improvement:  {improvement:+.3f}")
     print(f"Target:       >= 0.250")
     print(f"Status:       {'PASS' if improvement >= 0.25 else 'BELOW TARGET'}")
+
+    # Per-scenario comparison table
+    print("\n" + "=" * 60)
+    print("PER-SCENARIO BREAKDOWN")
+    print("=" * 60)
+    print(format_benchmark_report(baseline_results, crux_results))
 
 
 if __name__ == "__main__":

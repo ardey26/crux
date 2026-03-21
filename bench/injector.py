@@ -24,6 +24,19 @@ def inject(task_work_dir: str, task_config: dict) -> None:
             os.remove(target)
         return
 
+    if inject_type == "thrash" and inject_file:
+        target = os.path.join(task_work_dir, inject_file)
+        count = task_config.get("inject_count", 10)
+        states = ["up", "down"]
+        for i in range(count):
+            with open(target, "w") as f:
+                f.write(states[i % 2] + "\n")
+        return
+
+    if inject_type == "rate_limit":
+        # No file change -- the "injection" is handled in the agent code
+        return
+
     if inject_type == "double_change" and inject_file:
         # Write intermediate value first, then final value
         target = os.path.join(task_work_dir, inject_file)

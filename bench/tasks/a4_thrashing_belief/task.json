@@ -1,0 +1,7 @@
+{
+  "id": "a4",
+  "name": "Thrashing Belief",
+  "inject_type": "thrash",
+  "inject_file": "status.txt",
+  "inject_count": 10
+}
