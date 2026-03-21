@@ -61,7 +61,20 @@ impl Graph {
                 node.recent_hashes.push(old_hash);
                 node.change_count += 1;
 
+                // Schema evolution: if payload keys changed (not just values),
+                // treat as a schema change -- always invalidate, no stability suppression.
+                let schema_changed = payload_keys_differ(&node.payload, &obs.result);
+
                 node.payload = obs.result.clone();
+
+                if schema_changed {
+                    // Schema change always cascades regardless of stability filter
+                    node.status = BeliefStatus::Invalidated;
+                    node.confidence = 0.0;
+                    node.source_obs = obs.id.clone();
+                    node.updated_at = now;
+                    return (belief_id, true);
+                }
 
                 if is_revert {
                     // Revert detected — update payload but don't cascade
@@ -223,4 +236,18 @@ fn extract_identity_key(belief_type: &BeliefType, inputs: &serde_json::Value) ->
 /// Extract identity key from query filters (same logic, different source).
 fn extract_identity_key_from_filters(belief_type: &BeliefType, filters: &serde_json::Value) -> String {
     extract_identity_key(belief_type, filters)
+}
+
+/// Check if the top-level keys of two JSON objects differ (schema change).
+/// Returns false for non-object payloads or identical key sets.
+fn payload_keys_differ(old: &serde_json::Value, new: &serde_json::Value) -> bool {
+    match (old.as_object(), new.as_object()) {
+        (Some(old_map), Some(new_map)) => {
+            if old_map.len() != new_map.len() {
+                return true;
+            }
+            old_map.keys().any(|k| !new_map.contains_key(k))
+        }
+        _ => false,
+    }
 }
