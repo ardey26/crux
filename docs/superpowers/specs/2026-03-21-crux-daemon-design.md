@@ -47,7 +47,7 @@ Array of fixed-size entries:
 [u64 offset (8 bytes, little-endian)]
 ```
 
-Append-only. Written alongside each log append.
+Append-only. Written alongside each observation append. **The index covers observation events only.** Non-observation events (`run_start`, `run_end`, `add_edge`) have no step number and are not indexed. They are processed sequentially during full log replay and are not seekable by step. `query_at` uses the index to seek to the target step, then replays forward — non-observation events encountered during replay are processed normally.
 
 ### Durability
 
@@ -273,14 +273,17 @@ Replays the main log up to the given step into a temporary in-memory graph, then
 2. Remove stale socket file if present (stale = file exists but no process is listening)
 3. Bind `UnixListener`
 4. Wait for `run_start` message to initialize run state (reject other messages with `no_active_run`)
-5. If run log exists for the given `run_id`, replay it to reconstruct graph state; discard any orphaned branch log files
+5. If run log exists for the given `run_id`:
+   - If the log contains a `run_end` entry: reject with `{"error": "run_already_complete"}` — the client must use a new `run_id`
+   - If the log has no `run_end` (incomplete run): replay it to reconstruct graph state, discard any orphaned branch log files (matched by glob `{run_id}.branch.*.log`), and resume
+   - If no log exists: create fresh log and index files
 6. Begin processing messages
 
 ### Run Termination
 
 A run ends in one of two ways:
 
-- **Clean:** Client sends `run_end` with reason `"complete"` or `"error"`. The daemon appends the `run_end` event to the log, flushes, and is ready to accept a new `run_start`.
+- **Clean:** Client sends `run_end` with reason `"complete"` or `"error"`. If the pending diff queue is non-empty, the daemon logs a warning listing the count of unread diffs, then discards them. The daemon appends the `run_end` event to the log, flushes, and is ready to accept a new `run_start`.
 - **Unclean:** Client disconnects without `run_end`. The daemon detects the closed connection, logs a warning, but does NOT append a synthetic `run_end`. On next startup, a log without a `run_end` entry is treated as an incomplete run — replay still works, the run just has no defined terminal state.
 
 ### Shutdown
