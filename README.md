@@ -12,6 +12,14 @@ The part that goes beyond versioning is the dependency graph. Git doesn't know t
 
 Without Crux, an agent that read `config.json` at step 5 and wrote code based on it at step 10 has no way to know that `config.json` was changed at step 8 by a git pull. With Crux, the agent gets told immediately.
 
+## Philosophy
+
+Crux is built on Peirce's pragmatist epistemology. Beliefs are working hypotheses about reality. They're valid until falsified by a new observation. When falsified, you update and move on. No synthesis, no transcendence. Just ground truth.
+
+An agent reads a file and forms a belief: "config.json contains client_id app-12345." That belief is not a fact. It's a hypothesis that holds until the next observation contradicts it. When someone edits config.json and the agent re-reads it, the old belief is falsified. Crux marks it as such and propagates the doubt to everything that depended on it.
+
+This is the entire model. Observe, believe, falsify, update. The belief graph is not a knowledge base. It's a map of working assumptions, each one carrying a confidence score that decays the further it sits from direct observation. Crux doesn't try to reason about what's true. It just tracks what was observed, when, and what depends on what.
+
 ## Components
 
 - **daemon/** -- Rust binary that maintains the belief graph, event log, and query engine. Communicates over a Unix socket with MessagePack framing.
