@@ -11,5 +11,8 @@ build/
 # Crux runtime
 .crux/
 
+# Claude Code
+.claude/settings.local.json
+
 # OS
 .DS_Store
