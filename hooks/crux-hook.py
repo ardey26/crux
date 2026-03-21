@@ -277,7 +277,7 @@ def main():
         output_parts.append(f"[crux] auto-linked {edges_created} dependency edge(s)")
 
     if output_parts:
-        print(json.dumps({"reason": " | ".join(output_parts)}))
+        print(" | ".join(output_parts))
 
 
 if __name__ == "__main__":

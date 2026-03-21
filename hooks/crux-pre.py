@@ -130,7 +130,7 @@ def main():
             warnings.append(f"{len(stale)} stale belief(s) ({', '.join(parts)}) -- re-observe before acting on them")
 
     if warnings:
-        print(json.dumps({"reason": "[crux] " + " | ".join(warnings)}))
+        print("[crux] " + " | ".join(warnings))
 
 
 if __name__ == "__main__":
