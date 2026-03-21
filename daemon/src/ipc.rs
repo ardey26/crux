@@ -126,6 +126,7 @@ impl Daemon {
             "rollback" => self.handle_rollback(&msg),
             "merge" => self.handle_merge(&msg),
             "add_edge" => self.handle_add_edge(&msg),
+            "gc" => self.handle_gc(&msg),
             "run_end" => self.handle_run_end(&msg),
             _ => serde_json::json!({"error": "malformed"}),
         };
@@ -313,7 +314,7 @@ impl Daemon {
         }
     }
 
-    fn handle_query(&self, msg: &serde_json::Value) -> serde_json::Value {
+    fn handle_query(&mut self, msg: &serde_json::Value) -> serde_json::Value {
         if self.run_id.is_none() {
             return serde_json::json!({"error": "no_active_run"});
         }
@@ -410,7 +411,7 @@ impl Daemon {
             }
         }
 
-        match temp_graph.query(&belief_type, &filters) {
+        match temp_graph.query_readonly(&belief_type, &filters) {
             Some(node) => serde_json::json!({
                 "belief": {
                     "id": node.id,
@@ -527,6 +528,22 @@ impl Daemon {
                 "belief_id": belief_id,
             }),
         }
+    }
+
+    fn handle_gc(&mut self, msg: &serde_json::Value) -> serde_json::Value {
+        if self.run_id.is_none() {
+            return serde_json::json!({"error": "no_active_run"});
+        }
+
+        let max_nodes = msg.get("max_nodes").and_then(|v| v.as_u64()).unwrap_or(10_000) as usize;
+        let max_idle_ms = msg.get("max_idle_ms").and_then(|v| v.as_u64()).unwrap_or(600_000); // 10min default
+
+        let evicted = self.graph.gc(now_ms(), max_nodes, max_idle_ms);
+        serde_json::json!({
+            "ok": true,
+            "evicted": evicted,
+            "remaining": self.graph.len(),
+        })
     }
 
     fn handle_run_end(&mut self, msg: &serde_json::Value) -> serde_json::Value {

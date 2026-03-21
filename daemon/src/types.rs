@@ -57,6 +57,17 @@ pub struct BeliefNode {
     pub updated_at: u64,
     /// Per-belief TTL override in ms. If None, uses BeliefType::default_ttl_ms().
     pub ttl_ms: Option<u64>,
+    /// Recent payload hashes for stability detection. If a belief reverts to
+    /// a recently-seen value, the change is suppressed (no invalidation cascade).
+    /// Stores up to 4 recent hashes. Not serialized to the log.
+    #[serde(skip)]
+    pub recent_hashes: Vec<u64>,
+    /// Count of changes within the last stability window. Used for GC scoring.
+    #[serde(skip)]
+    pub change_count: u32,
+    /// Last time this belief was queried. Used for GC (evict least-recently-read).
+    #[serde(skip)]
+    pub last_read_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

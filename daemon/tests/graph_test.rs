@@ -98,7 +98,7 @@ fn query_returns_existing_belief() {
 
 #[test]
 fn query_returns_none_for_missing() {
-    let graph = Graph::new();
+    let mut graph = Graph::new();
     let result = graph.query(&BeliefType::File, &serde_json::json!({"path": "/nope.txt"}));
     assert!(result.is_none());
 }
