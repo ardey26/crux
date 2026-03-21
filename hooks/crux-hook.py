@@ -32,7 +32,13 @@ except ImportError:
     # If msgpack isn't installed, skip silently — don't break Claude Code
     sys.exit(0)
 
-SOCKET_PATH = os.environ.get("CRUX_SOCKET", "/tmp/crux.sock")
+SOCKET_PATH = os.environ.get("CRUX_SOCKET", "")
+
+if not SOCKET_PATH:
+    # Find the most recent crux socket if env var not set
+    import glob
+    socks = sorted(glob.glob("/tmp/crux-*.sock"), key=os.path.getmtime, reverse=True)
+    SOCKET_PATH = socks[0] if socks else "/tmp/crux.sock"
 
 
 def send_observation(msg: dict) -> dict | None:
