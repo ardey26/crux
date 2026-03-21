@@ -134,7 +134,57 @@ def main():
     success = send_run_start(run_id)
 
     if success:
-        print(json.dumps({"reason": f"[crux] world model active ({cwd})"}))
+        # Query for stale beliefs from previous sessions
+        stale_summary = get_stale_summary()
+        if stale_summary:
+            print(json.dumps({"reason": f"[crux] world model active ({cwd}) | {stale_summary}"}))
+        else:
+            print(json.dumps({"reason": f"[crux] world model active ({cwd}) | all beliefs valid"}))
+
+
+def get_stale_summary() -> str:
+    """Query daemon for all stale beliefs and return a summary string."""
+    s = None
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect(SOCKET_PATH)
+
+        msg = {"type": "stale", "request_id": "init-stale"}
+        payload = msgpack.packb(msg, use_bin_type=True)
+        s.sendall(struct.pack("<I", len(payload)) + payload)
+
+        resp_len_bytes = _recv_exact(s, 4)
+        resp_len = struct.unpack("<I", resp_len_bytes)[0]
+        resp_data = _recv_exact(s, resp_len)
+
+        resp = msgpack.unpackb(resp_data, raw=False)
+        stale = resp.get("stale", [])
+        if not stale:
+            return ""
+
+        # Categorize by type and status
+        by_type: dict[str, list] = {}
+        for b in stale:
+            bt = b.get("belief_type", "unknown")
+            by_type.setdefault(bt, []).append(b)
+
+        invalidated = [b for b in stale if b.get("status") == "invalidated"]
+        uncertain = [b for b in stale if b.get("status") == "uncertain"]
+
+        parts = []
+        if invalidated:
+            parts.append(f"{len(invalidated)} invalidated")
+        if uncertain:
+            parts.append(f"{len(uncertain)} uncertain")
+
+        type_summary = ", ".join(f"{len(v)} {k}" for k, v in by_type.items())
+        return f"{len(stale)} stale beliefs ({', '.join(parts)}): {type_summary}"
+    except Exception:
+        return ""
+    finally:
+        if s:
+            s.close()
 
 
 if __name__ == "__main__":

@@ -115,13 +115,19 @@ def main():
                         f"{abs_path}: belief is {status} (confidence {conf}), re-read before relying on cached content"
                     )
 
-    # 3. Check for TTL-expired beliefs
+    # 3. Check for ALL stale beliefs (not just TTL-expired)
     stale_resp = send_msg({"type": "stale", "request_id": "pre-stale"})
     if stale_resp:
         stale = stale_resp.get("stale", [])
-        ttl_expired = [b for b in stale if b.get("ttl_expired")]
-        if ttl_expired:
-            warnings.append(f"{len(ttl_expired)} belief(s) expired by TTL -- re-observe before acting on them")
+        if stale:
+            invalidated = [b for b in stale if b.get("status") == "invalidated"]
+            uncertain = [b for b in stale if b.get("status") == "uncertain"]
+            parts = []
+            if invalidated:
+                parts.append(f"{len(invalidated)} invalidated")
+            if uncertain:
+                parts.append(f"{len(uncertain)} uncertain")
+            warnings.append(f"{len(stale)} stale belief(s) ({', '.join(parts)}) -- re-observe before acting on them")
 
     if warnings:
         print(json.dumps({"reason": "[crux] " + " | ".join(warnings)}))
