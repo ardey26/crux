@@ -37,9 +37,7 @@ def _resolve_daemon_bin() -> str:
         return "crux-daemon"  # fall back to PATH
 
 DAEMON_BIN = _resolve_daemon_bin()
-# Socket path is per-session to avoid multi-session collision.
-# Set by main() after reading session_id, or from env.
-SOCKET_PATH = os.environ.get("CRUX_SOCKET", "")
+SOCKET_PATH = os.environ.get("CRUX_SOCKET", "/tmp/crux.sock")
 
 
 def daemon_running() -> bool:
@@ -121,7 +119,6 @@ def main():
     except (json.JSONDecodeError, EOFError):
         data = {}
 
-    session_id = data.get("session_id", os.urandom(8).hex())
     cwd = data.get("cwd", os.getcwd())
 
     # Run ID is project-scoped: same directory = same run = beliefs persist
@@ -129,16 +126,6 @@ def main():
     import hashlib
     project_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
     run_id = f"crux-{project_hash}"
-
-    # Socket path is per-session to allow parallel sessions
-    if not SOCKET_PATH:
-        SOCKET_PATH = f"/tmp/crux-{session_id[:16]}.sock"
-
-    # Write socket path to env file so PostToolUse hooks can find it
-    env_file = os.environ.get("CLAUDE_ENV_FILE", "")
-    if env_file:
-        with open(env_file, "a") as f:
-            f.write(f"CRUX_SOCKET={SOCKET_PATH}\n")
 
     if not daemon_running():
         if not start_daemon():
