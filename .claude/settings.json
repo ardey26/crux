@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/andeus/projects/crux/hooks/crux-pre.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Read|Write|Edit|Bash",
