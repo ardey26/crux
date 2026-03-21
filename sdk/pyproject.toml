@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crux"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["msgpack>=1.0"]
+
+[project.scripts]
+crux-observe = "crux.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["crux*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
