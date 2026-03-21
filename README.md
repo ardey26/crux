@@ -29,30 +29,23 @@ This is the entire model. Observe, believe, falsify, update. The belief graph is
 
 ## Quick start
 
-### Prerequisites
+### Install
 
-- Rust 1.75+
-- Python 3.10+
-- `msgpack` Python package (`pip install msgpack`)
+```
+pip install crux-sdk
+```
 
-### Build and install
+Download the daemon binary from the [latest release](https://github.com/ardey26/crux/releases), or build from source:
 
 ```
 make build    # builds daemon/target/release/crux-daemon
 make install  # also installs the Python SDK and crux-observe CLI
 ```
 
-Or manually:
-
-```
-cd daemon && cargo build --release
-cd sdk && pip install -e .
-```
-
 ### Run the daemon
 
 ```
-daemon/target/release/crux-daemon --socket-path /tmp/crux.sock
+crux-daemon --socket-path /tmp/crux.sock
 ```
 
 The daemon listens on the given Unix socket. It stores event logs in `~/.crux/runs/`.
