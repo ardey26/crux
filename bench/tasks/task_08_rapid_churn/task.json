@@ -1,0 +1,9 @@
+{
+    "id": "task_08",
+    "name": "Rapid Churn",
+    "goal": "Read a counter file, write code that uses its value. Counter is incremented 50 times rapidly. Agent must use the final value.",
+    "inject_step": 5,
+    "inject_file": "counter.txt",
+    "inject_type": "rapid_churn",
+    "inject_count": 50
+}

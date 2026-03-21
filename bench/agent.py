@@ -446,10 +446,176 @@ def write_output():
     tools.run_shell("python -m pytest tests/ -q --tb=short")
 
 
+# ---------------------------------------------------------------------------
+# Task 06: Deep Cascade
+# 10-file pipeline: stage_00 -> stage_01 -> ... -> stage_09.
+# Each file imports VALUE from the previous and re-exports it.
+# Injection changes stage_00. All downstream must update.
+# Tests verify stage_09 has the correct value.
+# Crux must propagate invalidation through 9 hops of edges.
+# ---------------------------------------------------------------------------
+
+def run_task_06(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    # Read the root value
+    root_raw = tools.read_file("stage_00.py")
+    root_d: dict = {}
+    exec(root_raw, root_d)
+    value = root_d["VALUE"]
+
+    # Build 10-stage pipeline: each embeds the value as a constant
+    for i in range(1, 10):
+        tools.write_file(f"stage_{i:02d}.py", f'VALUE = "{value}"\n')
+
+    # Write test -- checks stage_09 matches stage_00
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_pipeline.py", '''import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def test_pipeline_value():
+    """stage_09.VALUE must match current stage_00.VALUE."""
+    d = {}
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "stage_00.py")) as f:
+        exec(f.read(), d)
+    expected = d["VALUE"]
+
+    d2 = {}
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "stage_09.py")) as f:
+        exec(f.read(), d2)
+    got = d2["VALUE"]
+
+    assert got == expected, f"pipeline stale: stage_09 has {got!r}, stage_00 has {expected!r}"
+''')
+
+    for i in range(5, 13):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("stage_00.py"):
+        # Re-read root and rebuild entire pipeline with new value
+        root_raw = tools.read_file("stage_00.py")
+        root_d = {}
+        exec(root_raw, root_d)
+        value = root_d["VALUE"]
+        for i in range(1, 10):
+            tools.write_file(f"stage_{i:02d}.py", f'VALUE = "{value}"\n')
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
+# ---------------------------------------------------------------------------
+# Task 07: Conflicting Observations
+# Config changes twice rapidly. Agent must use the final value.
+# Without Crux: agent uses the original value.
+# With Crux: detects staleness, re-reads, gets the final value.
+# ---------------------------------------------------------------------------
+
+def run_task_07(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    config_raw = tools.read_file("config.py")
+    config = _parse_settings(config_raw)
+
+    tools.write_file("server.py", _make_server_py(config))
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_server.py", '''import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def _load_config():
+    d = {}
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.py")) as f:
+        exec(f.read(), d)
+    return d
+
+def test_host_matches():
+    from server import HOST
+    c = _load_config()
+    assert HOST == c["HOST"], f"stale host: got {HOST}, expected {c['HOST']}"
+
+def test_port_matches():
+    from server import PORT
+    c = _load_config()
+    assert PORT == c["PORT"], f"stale port: got {PORT}, expected {c['PORT']}"
+''')
+
+    for i in range(4, 9):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("config.py"):
+        config_raw = tools.read_file("config.py")
+        config = _parse_settings(config_raw)
+        tools.write_file("server.py", _make_server_py(config))
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
+def _make_server_py(config: dict) -> str:
+    return f'''"""Server config -- embedded from config.py."""
+
+HOST = "{config["HOST"]}"
+PORT = {config["PORT"]}
+
+def get_bind_address():
+    return f"{{HOST}}:{{PORT}}"
+'''
+
+
+# ---------------------------------------------------------------------------
+# Task 08: Rapid Churn
+# Counter file changes 50 times. Agent must use the final value (50).
+# Tests that the system stays coherent under high-frequency updates.
+# ---------------------------------------------------------------------------
+
+def run_task_08(tools: AgentTools, inject_fn: Callable | None = None) -> None:
+    counter = tools.read_file("counter.txt").strip()
+
+    tools.write_file("display.py", f'''"""Display module -- embeds counter value."""
+
+COUNTER = {counter}
+
+def get_counter():
+    return COUNTER
+''')
+
+    tools.write_file("tests/__init__.py", "")
+    tools.write_file("tests/test_counter.py", '''import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+def test_counter_matches():
+    from display import COUNTER
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "counter.txt")) as f:
+        expected = int(f.read().strip())
+    assert COUNTER == expected, f"stale counter: got {COUNTER}, expected {expected}"
+''')
+
+    for i in range(3, 6):
+        tools.run_shell(f"echo step {i}")
+
+    if inject_fn:
+        inject_fn()
+
+    if tools.check_stale("counter.txt"):
+        counter = tools.read_file("counter.txt").strip()
+        tools.write_file("display.py", f'''"""Display module -- embeds counter value."""
+
+COUNTER = {counter}
+
+def get_counter():
+    return COUNTER
+''')
+
+    tools.run_shell("python -m pytest tests/ -q --tb=short")
+
+
 TASK_AGENTS = {
     "task_01": run_task_01,
     "task_02": run_task_02,
     "task_03": run_task_03,
     "task_04": run_task_04,
     "task_05": run_task_05,
+    "task_06": run_task_06,
+    "task_07": run_task_07,
+    "task_08": run_task_08,
 }

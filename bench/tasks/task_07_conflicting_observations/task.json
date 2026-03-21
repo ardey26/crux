@@ -1,0 +1,10 @@
+{
+    "id": "task_07",
+    "name": "Conflicting Observations",
+    "goal": "Read a config file, write code based on it. Config is changed twice rapidly (two different values). Agent must use the most recent value.",
+    "inject_step": 8,
+    "inject_file": "config.py",
+    "inject_content": "HOST = \"second-change.example.com\"\nPORT = 9999\n",
+    "inject_type": "double_change",
+    "inject_intermediate": "HOST = \"first-change.example.com\"\nPORT = 7777\n"
+}

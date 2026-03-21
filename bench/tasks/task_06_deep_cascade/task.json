@@ -1,0 +1,8 @@
+{
+    "id": "task_06",
+    "name": "Deep Cascade",
+    "goal": "Build a 10-file pipeline where each file imports from the previous. Injection changes the root file. All downstream files must be updated to match.",
+    "inject_step": 12,
+    "inject_file": "stage_00.py",
+    "inject_content": "VALUE = \"changed_root\"\n"
+}
