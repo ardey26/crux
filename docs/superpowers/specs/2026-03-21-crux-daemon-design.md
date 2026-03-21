@@ -278,7 +278,7 @@ On SIGTERM/SIGINT:
 struct Observation {
     id:        String,              // ULID
     timestamp: u64,                 // Unix ms
-    action:    String,              // "read_file" | "http_get" | "shell" | "env_read"
+    action:    String,              // "read_file" | "http_get" | "shell" | "env_read" | "set_intent"
     inputs:    serde_json::Value,
     result:    serde_json::Value,
     status:    String,              // "success" | "failure" | "uncertain"
