@@ -17,7 +17,7 @@ import sys
 import urllib.request
 
 # Version must match the GitHub release tag
-VERSION = "v0.2.1"
+VERSION = "v0.3.0"
 GITHUB_REPO = "ardey26/crux"
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".crux", "bin")
 BINARY_NAME = "crux-daemon"
