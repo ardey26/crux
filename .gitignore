@@ -14,5 +14,8 @@ build/
 # Claude Code
 .claude/settings.local.json
 
+# Env
+.env
+
 # OS
 .DS_Store

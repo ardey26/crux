@@ -1,4 +1,4 @@
-.PHONY: build test bench clean install
+.PHONY: build test bench clean install publish
 
 build:
 	cd daemon && cargo build --release
@@ -12,6 +12,10 @@ bench: build
 
 install: build
 	cd sdk && pip install -e .
+
+publish:
+	@test -f .env && . ./.env || true; \
+	cd sdk && rm -rf dist/ build/ && python -m build && twine upload dist/* -u __token__ -p "$$PYPI_TOKEN"
 
 clean:
 	cd daemon && cargo clean
