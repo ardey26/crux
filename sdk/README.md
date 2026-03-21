@@ -42,7 +42,7 @@ world.close()
 
 ## Claude Code integration
 
-Add hooks to `.claude/settings.json` to auto-register every Read/Write/Edit/Bash tool call. See the [full README](https://github.com/ardey26/crux) for setup.
+Add hooks to `.claude/settings.json` to auto-register every Read/Write/Edit/Bash tool call. A PreToolUse hook surfaces stale beliefs before each tool call, and a PostToolUse hook records observations after. See the [full README](https://github.com/ardey26/crux) for setup.
 
 ## Features
 

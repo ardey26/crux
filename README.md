@@ -24,7 +24,7 @@ This is the entire model. Observe, believe, falsify, update. The belief graph is
 
 - **daemon/** -- Rust binary that maintains the belief graph, event log, and query engine. Communicates over a Unix socket with MessagePack framing.
 - **sdk/** -- Python package (`crux`) with `WorldModel`, `CruxInterceptor`, and a `crux-observe` CLI.
-- **hooks/** -- Claude Code integration. PostToolUse hooks that automatically register Read/Write/Edit/Bash tool calls as observations.
+- **hooks/** -- Claude Code integration. PreToolUse hook surfaces stale beliefs before tool calls. PostToolUse hook registers Read/Write/Edit/Bash as observations. SessionStart hook manages the daemon lifecycle.
 - **bench/** -- Benchmark harness with 17 scenarios (8 core + 9 adversarial) that measure agent performance with and without Crux.
 
 ## Quick start
@@ -60,6 +60,18 @@ Add the following to your project's `.claude/settings.json`. Replace `/path/to/c
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/crux/hooks/crux-pre.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Read|Write|Edit|Bash",
@@ -76,7 +88,9 @@ Add the following to your project's `.claude/settings.json`. Replace `/path/to/c
 }
 ```
 
-The SessionStart hook auto-starts the daemon and initializes a run. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. Each Claude Code session gets its own socket (keyed by session ID), so multiple sessions don't interfere with each other.
+The SessionStart hook starts a single long-lived daemon on `/tmp/crux.sock` (or resumes the existing one). The PreToolUse hook surfaces stale beliefs and pending invalidations before each tool call. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. All sessions share the same daemon, which is how cross-session belief persistence works.
+
+The daemon shuts itself down after 30 minutes of inactivity (configurable via `--idle-timeout`).
 
 That's it. Start a Claude Code session and Crux runs in the background.
 
@@ -223,29 +237,37 @@ Overall: Crux MCI 0.882, baseline 0.353, improvement +0.529.
 ```mermaid
 sequenceDiagram
     participant CC as Claude Code
-    participant Hook as PostToolUse Hook
+    participant Pre as PreToolUse Hook
+    participant Post as PostToolUse Hook
     participant D as Crux Daemon
 
     CC->>CC: Read /config.json
-    Hook->>D: observe(read_file, path, hash=a3f2)
+    Post->>D: observe(read_file, path, hash=a3f2)
     D->>D: Create belief: file /config.json, valid, 1.0
-    D-->>Hook: ok, diff=null
+    D-->>Post: ok, diff=null
 
     CC->>CC: Read /utils.py
-    Hook->>D: observe(read_file, path, hash=b7c1)
+    Post->>D: observe(read_file, path, hash=b7c1)
     D->>D: Create belief: file /utils.py, valid, 1.0
 
     Note over D: Client declares: utils.py depends on config.json
 
     CC->>CC: External process edits config.json
-    CC->>CC: Read /config.json (again)
-    Hook->>D: observe(read_file, path, hash=CHANGED)
+
+    CC->>CC: About to Read /config.json
+    Pre->>D: query(file, /config.json) + diff + stale
+    D-->>Pre: belief valid, no pending diffs
+    CC->>CC: Read /config.json
+    Post->>D: observe(read_file, path, hash=CHANGED)
     D->>D: Diff detected, invalidate config.json
     D->>D: Propagate: utils.py confidence 1.0 * 0.8 * 0.7 = 0.56
     D->>D: utils.py status -> uncertain
-    D-->>Hook: diff: 1 belief uncertain
+    D-->>Post: diff: 1 belief uncertain
 
-    Hook-->>CC: [crux] 1 belief(s) uncertain
+    CC->>CC: About to Edit /utils.py
+    Pre->>D: query(file, /utils.py) + diff
+    D-->>Pre: belief uncertain (confidence 0.56)
+    Pre-->>CC: [crux] /utils.py: belief is uncertain, re-read before relying on cached content
     CC->>CC: Agent re-reads stale files
 ```
 
@@ -277,8 +299,10 @@ graph LR
 
 ```mermaid
 graph TB
-    CC[Claude Code] -->|PostToolUse hook| H[crux-hook.py]
-    H -->|msgpack over Unix socket| D[crux-daemon]
+    CC[Claude Code] -->|PreToolUse hook| PRE[crux-pre.py]
+    CC -->|PostToolUse hook| H[crux-hook.py]
+    PRE -->|msgpack over Unix socket| D[crux-daemon]
+    H -->|msgpack over Unix socket| D
     D --> L[(Event Log<br/>~/.crux/runs/)]
     D --> G[Belief Graph<br/>in memory]
 
