@@ -204,23 +204,76 @@ cd sdk && python -m pytest tests/ -v
 
 ## Architecture
 
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code
+    participant Hook as PostToolUse Hook
+    participant D as Crux Daemon
+
+    CC->>CC: Read /config.json
+    Hook->>D: observe(read_file, path, hash=a3f2)
+    D->>D: Create belief: file /config.json, valid, 1.0
+    D-->>Hook: ok, diff=null
+
+    CC->>CC: Read /utils.py
+    Hook->>D: observe(read_file, path, hash=b7c1)
+    D->>D: Create belief: file /utils.py, valid, 1.0
+
+    Note over D: Client declares: utils.py depends on config.json
+
+    CC->>CC: External process edits config.json
+    CC->>CC: Read /config.json (again)
+    Hook->>D: observe(read_file, path, hash=CHANGED)
+    D->>D: Diff detected, invalidate config.json
+    D->>D: Propagate: utils.py confidence 1.0 * 0.8 * 0.7 = 0.56
+    D->>D: utils.py status -> uncertain
+    D-->>Hook: diff: 1 belief uncertain
+
+    Hook-->>CC: [crux] 1 belief(s) uncertain
+    CC->>CC: Agent re-reads stale files
 ```
-Claude Code                  Crux Daemon
-    |                            |
-    |-- Read /config.json ------>|
-    |                            |-- observe(read_file, path, hash)
-    |                            |-- lookup belief by (file, path)
-    |                            |-- no change -> status=valid
-    |                            |
-    |-- Edit /config.json ------>|
-    |                            |-- observe(read_file, path, NEW hash)
-    |                            |-- diff detected -> status=invalidated
-    |                            |-- propagate to dependents
-    |                            |-- return diff inline
-    |                            |
-    |<-- [crux] 1 belief uncertain
-    |
-    |-- (agent re-reads stale files)
+
+### Belief graph
+
+```mermaid
+graph LR
+    A[config.json<br/>hash: a3f2<br/>status: valid] --> B[utils.py<br/>hash: b7c1<br/>status: valid]
+    A --> C[main.py<br/>hash: c9d0<br/>status: valid]
+
+    style A fill:#4a9,stroke:#333
+    style B fill:#4a9,stroke:#333
+    style C fill:#4a9,stroke:#333
+```
+
+When config.json changes:
+
+```mermaid
+graph LR
+    A[config.json<br/>hash: CHANGED<br/>status: invalidated] --> B[utils.py<br/>hash: b7c1<br/>status: uncertain]
+    A --> C[main.py<br/>hash: c9d0<br/>status: uncertain]
+
+    style A fill:#d44,stroke:#333,color:#fff
+    style B fill:#da4,stroke:#333
+    style C fill:#da4,stroke:#333
+```
+
+### Component layout
+
+```mermaid
+graph TB
+    CC[Claude Code] -->|PostToolUse hook| H[crux-hook.py]
+    H -->|msgpack over Unix socket| D[crux-daemon]
+    D --> L[(Event Log<br/>~/.crux/runs/)]
+    D --> G[Belief Graph<br/>in memory]
+
+    SDK[Python SDK] -->|WorldModel API| D
+    CLI[crux-observe CLI] -->|single messages| D
+
+    subgraph Daemon Internals
+        D --> INV[Invalidation Propagator]
+        D --> BR[Branch Manager]
+        D --> QE[Query Engine]
+    end
 ```
 
 The event log survives process crashes (fsync on every write). On restart, the daemon replays the log to reconstruct the belief graph.
