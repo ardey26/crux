@@ -1,0 +1,15 @@
+# Rust
+daemon/target/
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyc
+dist/
+build/
+
+# Crux runtime
+.crux/
+
+# OS
+.DS_Store
