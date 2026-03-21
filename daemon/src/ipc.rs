@@ -713,6 +713,7 @@ impl Daemon {
     }
 
     /// Return all beliefs that are past their TTL or already marked uncertain/invalidated.
+    /// Includes identity keys and dependents for actionable warnings.
     fn handle_stale(&self) -> serde_json::Value {
         if self.run_id.is_none() {
             return serde_json::json!({"error": "no_active_run"});
@@ -730,13 +731,41 @@ impl Daemon {
             };
 
             if is_expired || node.status != BeliefStatus::Valid {
+                // Reverse lookup identity key from index
+                let identity_key = self.graph.identity_index
+                    .iter()
+                    .find(|(_, id)| *id == &node.id)
+                    .map(|((_, key), _)| key.clone());
+
+                // Find dependents: beliefs where edge.to == this belief (they depend on us)
+                let dependents: Vec<serde_json::Value> = self.graph.edges
+                    .iter()
+                    .filter(|e| e.to == node.id)
+                    .filter_map(|e| {
+                        self.graph.nodes.get(&e.from).map(|dep_node| {
+                            // Get dependent's identity key
+                            let dep_key = self.graph.identity_index
+                                .iter()
+                                .find(|(_, id)| *id == &dep_node.id)
+                                .map(|((_, key), _)| key.clone());
+                            serde_json::json!({
+                                "id": dep_node.id,
+                                "belief_type": serde_json::to_value(&dep_node.belief_type).unwrap(),
+                                "identity_key": dep_key,
+                            })
+                        })
+                    })
+                    .collect();
+
                 stale.push(serde_json::json!({
                     "id": node.id,
                     "belief_type": serde_json::to_value(&node.belief_type).unwrap(),
+                    "identity_key": identity_key,
                     "status": serde_json::to_value(&node.status).unwrap(),
                     "confidence": node.confidence,
                     "updated_at": node.updated_at,
                     "ttl_expired": is_expired,
+                    "dependents": dependents,
                 }));
             }
         }
