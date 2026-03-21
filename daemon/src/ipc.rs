@@ -15,6 +15,7 @@ use crate::ulid::new_ulid;
 /// Top-level daemon state.
 pub struct Daemon {
     socket_path: PathBuf,
+    idle_timeout: std::time::Duration,
     // Run state -- initialized on run_start
     run_id: Option<String>,
     graph: Graph,
@@ -32,6 +33,7 @@ impl Daemon {
     pub fn new(socket_path: PathBuf) -> Self {
         Self {
             socket_path,
+            idle_timeout: std::time::Duration::from_secs(30 * 60),
             run_id: None,
             graph: Graph::new(),
             main_log: None,
@@ -40,6 +42,10 @@ impl Daemon {
             pending_diffs: VecDeque::new(),
             beliefs_since_last_plan: Vec::new(),
         }
+    }
+
+    pub fn set_idle_timeout(&mut self, secs: u64) {
+        self.idle_timeout = std::time::Duration::from_secs(secs);
     }
 
     pub async fn run(&mut self) -> std::io::Result<()> {
@@ -56,7 +62,13 @@ impl Daemon {
         // Accept connections sequentially. Run state persists across connections
         // to support hook-based clients that connect per-message.
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, _) = match tokio::time::timeout(self.idle_timeout, listener.accept()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    eprintln!("idle timeout ({:?}), shutting down", self.idle_timeout);
+                    return Ok(());
+                }
+            };
             if let Err(e) = self.handle_connection(stream).await {
                 eprintln!("connection error: {}", e);
             }

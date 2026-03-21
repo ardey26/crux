@@ -4,13 +4,22 @@ use crux_daemon::ipc::Daemon;
 
 #[tokio::main]
 async fn main() {
-    let socket_path = std::env::args()
-        .skip_while(|a| a != "--socket-path")
-        .nth(1)
+    let args: Vec<String> = std::env::args().collect();
+
+    let socket_path = args.iter()
+        .position(|a| a == "--socket-path")
+        .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp/crux.sock"));
 
+    let idle_timeout: u64 = args.iter()
+        .position(|a| a == "--idle-timeout")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
+
     let mut daemon = Daemon::new(socket_path.clone());
+    daemon.set_idle_timeout(idle_timeout);
 
     // Spawn signal handler to clean up socket on shutdown
     let sp = socket_path.clone();
