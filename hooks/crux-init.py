@@ -20,7 +20,23 @@ try:
 except ImportError:
     sys.exit(0)
 
-DAEMON_BIN = os.environ.get("CRUX_DAEMON", "crux-daemon")
+def _resolve_daemon_bin() -> str:
+    """Find the daemon binary: env var, PATH, or auto-download via SDK."""
+    env = os.environ.get("CRUX_DAEMON")
+    if env:
+        return env
+    # Try the SDK's binary resolver (handles PATH check + auto-download)
+    try:
+        # Add the SDK to the path if we're running from the hooks/ directory
+        sdk_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sdk")
+        if os.path.isdir(sdk_path):
+            sys.path.insert(0, sdk_path)
+        from crux.binary import get_daemon_path
+        return get_daemon_path()
+    except Exception:
+        return "crux-daemon"  # fall back to PATH
+
+DAEMON_BIN = _resolve_daemon_bin()
 # Socket path is per-session to avoid multi-session collision.
 # Set by main() after reading session_id, or from env.
 SOCKET_PATH = os.environ.get("CRUX_SOCKET", "")
