@@ -5,14 +5,17 @@ import os
 import subprocess
 import tempfile
 
-HOOK_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "..", "hooks", "crux-hook.py")
-INIT_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "..", "hooks", "crux-init.py")
+# Use the SDK's packaged hooks via entry points (falls back to module invocation)
+import shutil
+
+HOOK_CMD = shutil.which("crux-hook-post") or "crux-hook-post"
+INIT_CMD = shutil.which("crux-hook-init") or "crux-hook-init"
 
 
 def run_hook(hook_input: dict, socket_path: str) -> str:
     """Run the hook script with given input, return stdout."""
     result = subprocess.run(
-        ["python3", HOOK_SCRIPT],
+        [HOOK_CMD],
         input=json.dumps(hook_input),
         capture_output=True,
         text=True,
@@ -32,14 +35,14 @@ def test_hook_detects_file_change(daemon):
     try:
         # 1. Init a run
         result = subprocess.run(
-            ["python3", INIT_SCRIPT],
+            [INIT_CMD],
             input=json.dumps({"session_id": "hook-test-1"}),
             capture_output=True,
             text=True,
             env={**os.environ, "CRUX_SOCKET": daemon},
             timeout=5,
         )
-        assert "world model active" in result.stdout
+        assert "[crux]" in result.stdout
 
         # 2. Simulate Read tool call
         output = run_hook({
@@ -115,7 +118,7 @@ def test_hook_bash_observation(daemon):
     """Simulate Bash tool call and verify shell_output belief is created."""
     # Init run
     subprocess.run(
-        ["python3", INIT_SCRIPT],
+        [INIT_CMD],
         input=json.dumps({"session_id": "hook-test-2"}),
         capture_output=True,
         text=True,
@@ -148,7 +151,7 @@ def test_hook_bash_observation(daemon):
 def test_hook_silent_when_no_daemon(tmp_path):
     """Hook should exit 0 silently when daemon isn't running."""
     result = subprocess.run(
-        ["python3", HOOK_SCRIPT],
+        [HOOK_CMD],
         input=json.dumps({
             "tool_name": "Read",
             "tool_input": {"file_path": "/tmp/nonexistent"},
