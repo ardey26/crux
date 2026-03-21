@@ -1,0 +1,8 @@
+{
+    "auth": {
+        "provider": "oauth2",
+        "client_id": "app-12345",
+        "redirect_uri": "http://localhost:8080/callback",
+        "scopes": ["read", "write"]
+    }
+}

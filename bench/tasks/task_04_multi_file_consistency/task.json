@@ -1,0 +1,8 @@
+{
+    "id": "task_04",
+    "name": "Multi-File Consistency",
+    "goal": "Add an 'age: int' field to the User dataclass in base_schema.py. Update models.py and api.py to include the new field in all functions. Write tests verifying the field propagates correctly.",
+    "inject_step": 8,
+    "inject_file": "base_schema.py",
+    "inject_content": "\"\"\"Base schema definition.\"\"\"\n\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass User:\n    id: int\n    name: str\n    email: str\n"
+}

@@ -1,0 +1,8 @@
+{
+    "id": "task_02",
+    "name": "Dependency Chain",
+    "goal": "Create a Python project: write a config module (settings.py) with DB connection settings, a db module that imports from settings, and a query module that imports from db. Write tests verifying the chain works.",
+    "inject_step": 10,
+    "inject_file": "settings.py",
+    "inject_content": "DB_HOST = \"new-db.example.com\"\nDB_PORT = 3307\nDB_NAME = \"production_v2\"\n"
+}

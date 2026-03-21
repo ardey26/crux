@@ -1,0 +1,8 @@
+{
+    "id": "task_05",
+    "name": "Auth Expiry",
+    "goal": "Read auth token, build API client with it, write tests. Token changes at step 12.",
+    "inject_step": 12,
+    "inject_file": "auth_token.txt",
+    "inject_content": "refreshed-token-xyz789\n"
+}

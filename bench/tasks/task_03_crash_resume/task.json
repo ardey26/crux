@@ -1,0 +1,9 @@
+{
+    "id": "task_03",
+    "name": "Crash and Resume",
+    "goal": "Write a store module with Item model, CRUD operations, and tests.",
+    "inject_step": 20,
+    "inject_type": "delete_file",
+    "inject_file": "models.py",
+    "inject_content": null
+}

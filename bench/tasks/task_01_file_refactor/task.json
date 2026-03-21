@@ -1,0 +1,8 @@
+{
+    "id": "task_01",
+    "name": "File Refactor",
+    "goal": "Refactor auth.py to read provider, client_id, redirect_uri, and scopes from config.json instead of using hardcoded values. All tests must pass.",
+    "inject_step": 15,
+    "inject_file": "config.json",
+    "inject_content": "{\n    \"auth\": {\n        \"provider\": \"oauth2\",\n        \"client_id\": \"new-client-99\",\n        \"redirect_uri\": \"http://localhost:9090/callback\",\n        \"scopes\": [\"read\", \"write\", \"admin\"]\n    }\n}\n"
+}
