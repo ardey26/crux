@@ -25,7 +25,7 @@ This is the entire model. Observe, believe, falsify, update. The belief graph is
 - **daemon/** -- Rust binary that maintains the belief graph, event log, and query engine. Communicates over a Unix socket with MessagePack framing.
 - **sdk/** -- Python package (`crux`) with `WorldModel`, `CruxInterceptor`, and a `crux-observe` CLI.
 - **hooks/** -- Claude Code integration. PostToolUse hooks that automatically register Read/Write/Edit/Bash tool calls as observations.
-- **bench/** -- Benchmark harness with 5 tasks that measure agent performance with and without Crux.
+- **bench/** -- Benchmark harness with 17 scenarios (8 core + 9 adversarial) that measure agent performance with and without Crux.
 
 ## Quick start
 
@@ -127,6 +127,9 @@ utils = world.query("file", path="/abs/path/utils.py")
 world.add_edge(utils.id, config.id, weight=0.8)
 # Now if config.json changes, utils.py automatically becomes uncertain
 
+# Field-level filtering: only cascade when specific payload fields change
+world.add_edge(utils.id, config.id, weight=0.8, fields=["hash"])
+
 # Historical queries
 past = world.at(step=5)
 old_belief = past.query("file", path="/abs/path/config.json")
@@ -172,8 +175,14 @@ Only one branch can be active at a time.
 1. The daemon maintains an append-only binary event log and an in-memory belief graph.
 2. When an observation arrives (file read, shell command, etc.), the daemon extracts an identity key (file path, command string, env var name) and looks up the existing belief.
 3. If the payload differs from the stored belief (different hash, different exit code), the belief is marked as invalidated.
-4. Invalidation propagates through declared edges. A belief that depends on an invalidated belief has its confidence decayed by `weight * 0.7` per hop. Below 0.6 it becomes "uncertain", below 0.3 it becomes "invalidated".
+4. Invalidation propagates through dependency edges. Confidence decays by `weight * 0.7` per hop. Below 0.6 it becomes "uncertain", below 0.3 it becomes "invalidated".
 5. The daemon returns an inline diff on each observe call and accumulates diffs in a pending queue for polling.
+6. **Auto-edges:** When using the hooks or interceptor, writes automatically depend on all files read since the last write. No manual `add_edge` calls needed for the common read-then-write pattern.
+7. **TTL expiry:** Beliefs expire after a type-specific TTL (shell: 30s, file: 60s, http: 2min, env: 5min). Expired beliefs are marked uncertain on the next query. Per-belief override via `ttl_ms` on observe.
+8. **Stability filter:** If a belief oscillates (3+ changes and reverts to a recently-seen value), the cascade is suppressed. Prevents thrashing from triggering unnecessary re-derivation.
+9. **Schema evolution:** If a belief's payload keys change (fields added or removed), it always invalidates regardless of the stability filter.
+10. **Field-level edges:** Edges can specify which payload fields they depend on. Invalidation only cascades if one of the watched fields actually changed.
+11. **GC:** The `gc` IPC message evicts least-recently-read beliefs when the graph exceeds a configurable max size.
 
 ## Belief types
 
@@ -209,7 +218,21 @@ Or manually:
 cd bench && python runner.py
 ```
 
-This runs 5 tasks with and without Crux and computes the Model Coherence Index (MCI). The benchmark uses a scripted agent that simulates realistic tool call patterns. Each task injects a state change mid-run (file edit, file deletion, config change) and measures whether the agent recovers.
+This runs 17 scenarios with and without Crux and computes the Model Coherence Index (MCI). The benchmark uses a scripted agent that simulates realistic tool call patterns. Each task injects a state change mid-run and measures whether the agent recovers.
+
+The benchmark includes adversarial scenarios that show where Crux hurts or can't help:
+
+| Scenario | MCI | What it tests |
+|---|---|---|
+| task_01-08 | +0.5 to +0.9 | Core value prop: drift detection, crash recovery |
+| a1: Static overhead | 0.0 | Minimum tax on simple tasks |
+| a3: False cascade | -0.57 | Cost of coarse-grained hashing |
+| a4: Thrashing | -1.0 | Oscillating beliefs without damping |
+| b1: Semantic equivalence | -0.32 | Hash differs but meaning is identical |
+| b4: Latent dependency | -0.37 | Semantic dependencies invisible to graph |
+| b5: Stale plan | -0.10 | Plans aren't first-class beliefs |
+
+Overall: Crux MCI 0.882, baseline 0.353, improvement +0.529.
 
 ## Architecture
 
