@@ -71,7 +71,7 @@ In-memory directed graph built from the log. Serves as a fast query cache over t
 
 - `nodes: HashMap<String, BeliefNode>` — keyed by belief ID (ULID)
 - `edges: Vec<BeliefEdge>` — flat list; O(n) scan per invalidation query. **Known MVP limitation** — replace with adjacency list indexed by `to` field if performance becomes an issue.
-- `identity_index: HashMap<(String, String), String>` — maps `(belief_type, identity_key_value)` to belief ID for O(1) upsert lookups
+- `identity_index: HashMap<(BeliefType, String), String>` — maps `(belief_type, identity_key_value)` to belief ID for O(1) upsert lookups
 
 ### Belief Types and Identity Keys
 
@@ -116,7 +116,9 @@ Edges are also logged as events so they are reconstructed on startup replay.
 
 ### Reconstruction on Startup
 
-Replay the entire log from offset 0, running each observation and `add_edge` event through the ingest flow (minus re-appending to the log). Any branch log files found on disk are discarded — branches do not survive restart. This is the simplest recovery strategy and avoids the complexity of reconstructing in-flight branch state.
+Replay the entire log from offset 0, running each observation and `add_edge` event through the ingest flow (minus re-appending to the log). `run_start` and `run_end` events are skipped during replay — they are metadata, not graph-affecting events. A log containing a `run_end` entry is still valid for replay; the new `run_start` message from the client overrides the previous run's terminal state.
+
+Any branch log files on disk (matched by glob `{run_id}.branch.*.log`) are discarded — branches do not survive restart. This is the simplest recovery strategy and avoids the complexity of reconstructing in-flight branch state.
 
 ---
 
@@ -244,7 +246,7 @@ Every request includes a `request_id` field. Every response echoes it.
 | `rollback {branch_id}` | `{ok: true}` or error if branch not found |
 | `merge {branch_id}` | `{ok: true}` or error if branch not found |
 | `add_edge {from, to, weight}` | `{ok: true}` or error if belief not found |
-| `snapshot` | `{snapshot_id, offset}` — pointer to current log offset |
+| `snapshot` *(Step 6 — listed for completeness, not implemented in Steps 1-5)* | `{snapshot_id, offset}` — pointer to current log offset |
 | `run_end {run_id, reason}` | `{ok: true}` — reason is `"complete"` or `"error"` |
 
 All responses include the echoed `request_id`.
