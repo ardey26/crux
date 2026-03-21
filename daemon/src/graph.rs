@@ -237,6 +237,7 @@ fn extract_identity_key(belief_type: &BeliefType, inputs: &serde_json::Value) ->
         BeliefType::HttpEndpoint => inputs["url"].as_str().unwrap_or("").to_string(),
         BeliefType::EnvVar => inputs["key"].as_str().unwrap_or("").to_string(),
         BeliefType::ShellOutput => inputs["command"].as_str().unwrap_or("").to_string(),
+        BeliefType::Plan => inputs["plan_id"].as_str().unwrap_or("").to_string(),
     }
 }
 

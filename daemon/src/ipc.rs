@@ -15,13 +15,17 @@ use crate::ulid::new_ulid;
 /// Top-level daemon state.
 pub struct Daemon {
     socket_path: PathBuf,
-    // Run state — initialized on run_start
+    // Run state -- initialized on run_start
     run_id: Option<String>,
     graph: Graph,
     main_log: Option<EventLog>,
     branch_mgr: Option<BranchManager>,
     step_counter: u32,
     pending_diffs: VecDeque<InvalidationDiff>,
+    /// Belief IDs observed since the last plan creation. Used as the edge
+    /// creation window for plan beliefs -- a plan depends on all beliefs
+    /// observed since the previous plan. Creating a plan clears this buffer.
+    beliefs_since_last_plan: Vec<String>,
 }
 
 impl Daemon {
@@ -34,6 +38,7 @@ impl Daemon {
             branch_mgr: None,
             step_counter: 0,
             pending_diffs: VecDeque::new(),
+            beliefs_since_last_plan: Vec::new(),
         }
     }
 
@@ -118,6 +123,7 @@ impl Daemon {
         let mut response = match msg_type {
             "run_start" => self.handle_run_start(&msg),
             "observe" => self.handle_observe(&msg),
+            "create_plan" => self.handle_create_plan(&msg),
             "query" => self.handle_query(&msg),
             "diff" => self.handle_diff(),
             "stale" => self.handle_stale(),
@@ -230,6 +236,7 @@ impl Daemon {
             Some("http_get") => Action::HttpGet,
             Some("shell") => Action::Shell,
             Some("env_read") => Action::EnvRead,
+            Some("create_plan") => Action::CreatePlan,
             _ => return serde_json::json!({"error": "unknown_action"}),
         };
 
@@ -278,6 +285,11 @@ impl Daemon {
             }
         }
 
+        // Track this belief for plan edge creation (fence pattern)
+        if action != Action::CreatePlan {
+            self.beliefs_since_last_plan.push(belief_id.clone());
+        }
+
         // Compute observation-local diff if belief changed
         let obs_diff = if changed {
             let diff = invalidation::propagate(&mut self.graph, &belief_id);
@@ -312,6 +324,79 @@ impl Daemon {
             }),
             None => serde_json::json!({"ok": true, "belief_id": belief_id, "diff": null}),
         }
+    }
+
+    /// Create a plan belief with auto-edges to all beliefs observed since the
+    /// last plan creation (fence pattern). Clears the belief buffer after.
+    fn handle_create_plan(&mut self, msg: &serde_json::Value) -> serde_json::Value {
+        if self.run_id.is_none() {
+            return serde_json::json!({"error": "no_active_run"});
+        }
+
+        let plan_id = msg.get("plan_id").and_then(|v| v.as_str())
+            .unwrap_or_else(|| "").to_string();
+        let goal = msg.get("goal").and_then(|v| v.as_str())
+            .unwrap_or("").to_string();
+        let payload = msg.get("payload").cloned()
+            .unwrap_or_else(|| serde_json::json!({"goal": goal}));
+
+        if plan_id.is_empty() {
+            return serde_json::json!({"error": "malformed", "detail": "plan_id required"});
+        }
+
+        // Determine step
+        if self.branch_mgr.as_ref().map_or(false, |b| b.is_active()) {
+            let branch = self.branch_mgr.as_mut().unwrap().active_branch.as_mut().unwrap();
+            branch.step_counter += 1;
+        } else {
+            self.step_counter += 1;
+        }
+        let step = self.step_counter;
+
+        // Create the plan as an observation
+        let obs = Observation {
+            id: new_ulid(),
+            timestamp: now_ms(),
+            action: Action::CreatePlan,
+            inputs: serde_json::json!({"plan_id": plan_id}),
+            result: payload,
+            status: ObservationStatus::Success,
+            step,
+        };
+
+        let (belief_id, _) = self.graph.ingest(&obs);
+
+        // Auto-edge: plan depends on all beliefs observed since last plan
+        let source_beliefs = std::mem::take(&mut self.beliefs_since_last_plan);
+        let mut edges_created = 0;
+        for source_id in &source_beliefs {
+            if source_id == &belief_id {
+                continue;
+            }
+            let edge = BeliefEdge {
+                from: belief_id.clone(),
+                to: source_id.clone(),
+                weight: 0.9,
+                fields: None,
+            };
+            if self.graph.add_edge(edge.clone()).is_ok() {
+                let event = LogEvent::AddEdge(edge);
+                let _ = self.append_to_active_log(&event);
+                edges_created += 1;
+            }
+        }
+
+        // Append the plan observation to log
+        let event = LogEvent::Observe(obs);
+        if let Err(e) = self.append_to_active_log(&event) {
+            return serde_json::json!({"error": format!("log_write_failed: {}", e)});
+        }
+
+        serde_json::json!({
+            "ok": true,
+            "belief_id": belief_id,
+            "edges_created": edges_created,
+        })
     }
 
     fn handle_query(&mut self, msg: &serde_json::Value) -> serde_json::Value {
@@ -591,6 +676,7 @@ impl Daemon {
         self.branch_mgr = None;
         self.step_counter = 0;
         self.pending_diffs.clear();
+        self.beliefs_since_last_plan.clear();
 
         serde_json::json!({"ok": true})
     }
@@ -675,6 +761,7 @@ fn parse_belief_type(s: Option<&str>) -> Option<BeliefType> {
         Some("http_endpoint") => Some(BeliefType::HttpEndpoint),
         Some("env_var") => Some(BeliefType::EnvVar),
         Some("shell_output") => Some(BeliefType::ShellOutput),
+        Some("plan") => Some(BeliefType::Plan),
         _ => None,
     }
 }

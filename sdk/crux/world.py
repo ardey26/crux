@@ -109,6 +109,24 @@ class WorldModel:
         if "error" in resp:
             raise RuntimeError(f"rollback failed: {resp['error']}")
 
+    def create_plan(self, plan_id: str, goal: str = "", payload: dict | None = None) -> str:
+        """Create a plan belief with auto-edges to all beliefs observed since the last plan.
+
+        Returns the plan's belief ID. The plan depends on all beliefs read since
+        the previous create_plan call (fence pattern).
+        """
+        msg: dict = {
+            "type": "create_plan",
+            "plan_id": plan_id,
+            "goal": goal,
+        }
+        if payload is not None:
+            msg["payload"] = payload
+        resp = self._client.send(msg)
+        if "error" in resp:
+            raise RuntimeError(f"create_plan failed: {resp['error']}")
+        return resp.get("belief_id", "")
+
     def add_edge(self, from_id: str, to_id: str, weight: float = 0.9, fields: list[str] | None = None) -> None:
         msg = {
             "type": "add_edge",

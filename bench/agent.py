@@ -953,8 +953,16 @@ def run_b5(tools: AgentTools, inject_fn: Callable | None = None) -> None:
     reqs_raw = tools.read_file("requirements.txt")
     packages = [l.strip() for l in reqs_raw.strip().split("\n") if l.strip()]
 
-    # "Plan": install each package, write an import test for each
-    # The plan is derived from the initial requirements
+    # Register the plan as a belief (with Crux).
+    # The plan depends on requirements.txt via the fence pattern.
+    plan_belief_id = None
+    if tools._interceptor:
+        plan_belief_id = tools._interceptor.world.create_plan(
+            plan_id="install-deps",
+            goal="Install packages and write app.py referencing all of them",
+            payload={"packages": packages},
+        )
+
     plan = packages[:]
 
     # Execute plan steps 1-2: write setup
@@ -969,15 +977,27 @@ def run_b5(tools: AgentTools, inject_fn: Callable | None = None) -> None:
     if inject_fn:
         inject_fn()
 
-    # Crux detects requirements.txt changed
-    if tools.check_stale("requirements.txt"):
-        # Agent re-reads requirements but does NOT re-plan
-        reqs_raw = tools.read_file("requirements.txt")
-        new_packages = [l.strip() for l in reqs_raw.strip().split("\n") if l.strip()]
-        # Agent continues with OLD plan (plan variable is stale)
-        # This is the bug: plan != new_packages
+    # With plan beliefs: check if the PLAN is stale (not just requirements.txt).
+    # If the plan is stale, re-read requirements AND re-plan.
+    plan_is_stale = False
+    if tools._interceptor and plan_belief_id:
+        plan_belief = tools._interceptor.world.query("plan", plan_id="install-deps")
+        if plan_belief and (plan_belief.status in ("uncertain", "invalidated") or plan_belief.confidence < 1.0):
+            plan_is_stale = True
+    elif tools.check_stale("requirements.txt"):
+        # Without plan beliefs, fall back to checking requirements.txt directly.
+        # This was the old behavior -- re-read data but don't re-plan.
+        plan_is_stale = True
 
-    # Execute remaining plan steps using the (possibly stale) plan
+    if plan_is_stale:
+        reqs_raw = tools.read_file("requirements.txt")
+        packages = [l.strip() for l in reqs_raw.strip().split("\n") if l.strip()]
+        plan = packages[:]  # re-plan: update the plan variable
+        # Re-execute the plan with new packages
+        tools.write_file("app.py", "# App module\n" +
+            "\n".join(f"# Uses {p.split('==')[0]}" for p in plan) + "\n")
+
+    # Execute remaining plan steps
     test_code = '''import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

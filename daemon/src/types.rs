@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     ReadFile,
     HttpGet,
     Shell,
     EnvRead,
+    CreatePlan,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -16,6 +17,7 @@ pub enum BeliefType {
     HttpEndpoint,
     EnvVar,
     ShellOutput,
+    Plan,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,6 +132,7 @@ impl Action {
             Action::HttpGet => BeliefType::HttpEndpoint,
             Action::Shell => BeliefType::ShellOutput,
             Action::EnvRead => BeliefType::EnvVar,
+            Action::CreatePlan => BeliefType::Plan,
         }
     }
 }
@@ -141,7 +144,8 @@ impl BeliefType {
             BeliefType::ShellOutput => 30_000,   // 30s — commands can change fast
             BeliefType::File => 60_000,           // 60s
             BeliefType::HttpEndpoint => 120_000,  // 2min
-            BeliefType::EnvVar => 300_000,        // 5min — env vars rarely change
+            BeliefType::EnvVar => 300_000,        // 5min -- env vars rarely change
+            BeliefType::Plan => 600_000,          // 10min -- plans are long-lived
         }
     }
 }
