@@ -6,7 +6,9 @@
 
 **Dependencies:** tokio (async runtime), rmp-serde (MessagePack), memmap2 (memory-mapped reads), ulid (unique IDs), serde/serde_json (serialization). Standard dynamic linking; static/musl deferred to later (original requirement: single static binary — will be addressed before release).
 
-**Known deviations from full spec:** Static binary distribution deferred. `snapshot` IPC message deferred to Step 6 (Python SDK). Composite identity key serialization specified but untestable until a multi-field belief type is added.
+**Known deviations from full spec:** Static binary distribution deferred. `snapshot` IPC message deferred to Step 6 (Python SDK). Composite identity key serialization specified but untestable until a multi-field belief type is added. `user_intent` belief type cut from v1 (see rationale below).
+
+**Honest scope of v1 invalidation:** Crux v1 catches direct belief changes (a file's hash changed, an endpoint returned a different status code) and propagates invalidation along *explicitly declared* edges. The daemon does not infer dependencies automatically. If a dependency is not declared via `add_edge`, invalidation will not propagate along it. The SDK interceptor layer (Step 7) will add heuristic auto-detection (import parsing, file-read tracking) to reduce manual edge work. Until then, Crux v1 is useful for direct-change detection and for cascading invalidation when the client explicitly declares the dependency graph.
 
 ---
 
@@ -27,8 +29,14 @@ The append-only binary log is the authoritative source of truth. All other state
 [msgpack payload (variable)]
 ```
 
-- First entry is always `{"type": "run_start", "run_id": "..."}`
-- Every observation is appended as a serialized msgpack blob
+The `type` field in the payload distinguishes event kinds:
+
+- `{"type": "run_start", "run_id": "..."}` — always the first entry
+- `{"type": "observe", ...observation fields}` — an observation event
+- `{"type": "add_edge", "from": "...", "to": "...", "weight": 0.9}` — an edge creation event
+- `{"type": "run_end", "run_id": "...", "reason": "complete" | "error"}` — clean run termination
+
+All events share the same binary envelope: `[u64 timestamp][u32 length][msgpack payload]`.
 
 ### Index File Format
 
@@ -73,7 +81,8 @@ In-memory directed graph built from the log. Serves as a fast query cache over t
 | `http_endpoint` | `url` | `status_code`, `auth_valid`, `response_hash` |
 | `env_var` | `key` | `present`, `value_hash` |
 | `shell_output` | `command` | `stdout_hash`, `exit_code` |
-| `user_intent` | `goal_id` | `goal`, `priority`, `last_updated` |
+
+**Cut from v1: `user_intent`.** Every other belief type represents external world state with a natural re-observation mechanism (re-read file, re-ping endpoint). `user_intent` is agent-internal state with no external source to diff against and no clear invalidation path. Deferred until there is a concrete answer for how it gets invalidated and by whom.
 
 ### Composite Identity Key Serialization
 
@@ -83,7 +92,7 @@ For belief types with multiple identity key fields, the identity key value is bu
 
 When an Observation arrives:
 
-1. Map `action` to `belief_type` (`"read_file"` -> `"file"`, `"http_get"` -> `"http_endpoint"`, `"shell"` -> `"shell_output"`, `"env_read"` -> `"env_var"`, `"set_intent"` -> `"user_intent"`)
+1. Map `action` to `belief_type` (`"read_file"` -> `"file"`, `"http_get"` -> `"http_endpoint"`, `"shell"` -> `"shell_output"`, `"env_read"` -> `"env_var"`). Unknown actions are rejected with `{"error": "unknown_action"}`.
 2. Extract identity key from `inputs`
 3. Look up existing belief via `identity_index`
 4. If not found: create new `BeliefNode` with `status="valid"`, `confidence=1.0`, insert into both maps
@@ -236,6 +245,7 @@ Every request includes a `request_id` field. Every response echoes it.
 | `merge {branch_id}` | `{ok: true}` or error if branch not found |
 | `add_edge {from, to, weight}` | `{ok: true}` or error if belief not found |
 | `snapshot` | `{snapshot_id, offset}` — pointer to current log offset |
+| `run_end {run_id, reason}` | `{ok: true}` — reason is `"complete"` or `"error"` |
 
 All responses include the echoed `request_id`.
 
@@ -251,7 +261,9 @@ All responses include the echoed `request_id`.
 
 ### `query_at` Behavior
 
-Replays the main log up to the given step into a temporary in-memory graph, then runs the query against it. O(n) in log entries — acceptable for MVP since historical queries are infrequent. **`query_at` always replays the main log only, regardless of active branch state.** It is a historical view of the main timeline. There is no way to do historical queries against branch state in MVP — this is a known user-facing limitation.
+Replays the main log up to the given step into a temporary in-memory graph, then runs the query against it. O(n) in log entries. **`query_at` has no latency guarantee** — for a 10,000-step run this could take hundreds of milliseconds or more. It is unsuitable for the agent's hot path and should only be used for debugging or post-hoc analysis. **v2:** Periodic graph snapshots at configurable intervals to bound replay cost to O(snapshot_interval).
+
+**`query_at` always replays the main log only, regardless of active branch state.** It is a historical view of the main timeline. There is no way to do historical queries against branch state in MVP — this is a known user-facing limitation.
 
 ### Startup Sequence
 
@@ -261,6 +273,13 @@ Replays the main log up to the given step into a temporary in-memory graph, then
 4. Wait for `run_start` message to initialize run state (reject other messages with `no_active_run`)
 5. If run log exists for the given `run_id`, replay it to reconstruct graph state; discard any orphaned branch log files
 6. Begin processing messages
+
+### Run Termination
+
+A run ends in one of two ways:
+
+- **Clean:** Client sends `run_end` with reason `"complete"` or `"error"`. The daemon appends the `run_end` event to the log, flushes, and is ready to accept a new `run_start`.
+- **Unclean:** Client disconnects without `run_end`. The daemon detects the closed connection, logs a warning, but does NOT append a synthetic `run_end`. On next startup, a log without a `run_end` entry is treated as an incomplete run — replay still works, the run just has no defined terminal state.
 
 ### Shutdown
 
@@ -274,24 +293,31 @@ On SIGTERM/SIGINT:
 
 ## Data Structures Reference
 
+**Implementation note:** The `action`, `belief_type`, and `status` fields are shown as `String` here to match the wire format (MessagePack serialization). **In the Rust implementation, these MUST be enums** (`Action`, `BeliefType`, `BeliefStatus`) with `serde(rename_all = "snake_case")` for serialization. Using raw strings internally turns typos into runtime bugs that the type system should catch at compile time.
+
 ```rust
+enum Action { ReadFile, HttpGet, Shell, EnvRead }
+enum BeliefType { File, HttpEndpoint, EnvVar, ShellOutput }
+enum BeliefStatus { Valid, Uncertain, Invalidated }
+enum ObservationStatus { Success, Failure, Uncertain }
+
 struct Observation {
     id:        String,              // ULID
     timestamp: u64,                 // Unix ms
-    action:    String,              // "read_file" | "http_get" | "shell" | "env_read" | "set_intent"
+    action:    Action,
     inputs:    serde_json::Value,
     result:    serde_json::Value,
-    status:    String,              // "success" | "failure" | "uncertain"
+    status:    ObservationStatus,
     step:      u32,                 // agent step number
 }
 
 struct BeliefNode {
     id:          String,            // ULID
-    belief_type: String,            // "file" | "http_endpoint" | "env_var" | "shell_output" | "user_intent"
+    belief_type: BeliefType,
     payload:     serde_json::Value,
     confidence:  f32,               // 0.0 - 1.0
     source_obs:  String,            // observation that created/last updated this
-    status:      String,            // "valid" | "uncertain" | "invalidated"
+    status:      BeliefStatus,
     created_at:  u64,
     updated_at:  u64,
 }
@@ -312,6 +338,7 @@ struct BeliefEdge {
 - Daemon startup: < 200ms
 - `observe` round-trip: < 5ms
 - `query` round-trip: < 2ms
+- `query_at`: **no latency guarantee** — O(n) log replay, not for hot path
 - Event log: survives process kill (fsync on every write)
 
 ---
