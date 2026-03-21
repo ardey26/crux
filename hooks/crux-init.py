@@ -122,8 +122,15 @@ def main():
         data = {}
 
     session_id = data.get("session_id", os.urandom(8).hex())
+    cwd = data.get("cwd", os.getcwd())
 
-    # Per-session socket path to avoid multi-session collision
+    # Run ID is project-scoped: same directory = same run = beliefs persist
+    # across sessions. Different sessions in the same project share history.
+    import hashlib
+    project_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
+    run_id = f"crux-{project_hash}"
+
+    # Socket path is per-session to allow parallel sessions
     if not SOCKET_PATH:
         SOCKET_PATH = f"/tmp/crux-{session_id[:16]}.sock"
 
@@ -137,11 +144,10 @@ def main():
         if not start_daemon():
             sys.exit(0)
 
-    run_id = f"cc-{session_id[:16]}"
     success = send_run_start(run_id)
 
     if success:
-        print(json.dumps({"reason": f"[crux] world model active (run={run_id[:12]}...)"}))
+        print(json.dumps({"reason": f"[crux] world model active ({cwd})"}))
 
 
 if __name__ == "__main__":

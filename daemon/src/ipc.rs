@@ -168,35 +168,26 @@ impl Daemon {
                 Err(e) => return serde_json::json!({"error": format!("log_open_failed: {}", e)}),
             };
 
-            match check_log.has_run_end() {
-                Ok(true) => {
-                    return serde_json::json!({"error": "run_already_complete"});
-                }
-                Ok(false) => {
-                    // Incomplete run — replay to reconstruct graph
-                    match check_log.read_all() {
-                        Ok(events) => {
-                            self.graph = Graph::new();
-                            self.step_counter = 0;
-                            for (_, event) in &events {
-                                match event {
-                                    LogEvent::Observe(obs) => {
-                                        self.graph.ingest(obs);
-                                        self.step_counter = obs.step;
-                                    }
-                                    LogEvent::AddEdge(edge) => {
-                                        let _ = self.graph.add_edge(edge.clone());
-                                    }
-                                    _ => {}
-                                }
+            // Replay existing log to reconstruct graph state, whether the
+            // previous run ended cleanly or not. A run_end is a session
+            // boundary, not a tombstone -- the same run ID can span sessions.
+            match check_log.read_all() {
+                Ok(events) => {
+                    self.graph = Graph::new();
+                    self.step_counter = 0;
+                    for (_, event) in &events {
+                        match event {
+                            LogEvent::Observe(obs) => {
+                                self.graph.ingest(obs);
+                                self.step_counter = obs.step;
                             }
-                            // Discard orphaned branch files
-                            cleanup_branch_files(&base_dir, &run_id);
-                        }
-                        Err(e) => {
-                            return serde_json::json!({"error": format!("corrupt log: {}", e)});
+                            LogEvent::AddEdge(edge) => {
+                                let _ = self.graph.add_edge(edge.clone());
+                            }
+                            _ => {}
                         }
                     }
+                    cleanup_branch_files(&base_dir, &run_id);
                 }
                 Err(e) => {
                     return serde_json::json!({"error": format!("corrupt log: {}", e)});
