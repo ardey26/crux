@@ -5,7 +5,7 @@
 Crux tracks what an AI agent believes about the world and tells it when those beliefs go stale. This repo contains:
 - `daemon/` - Rust binary that maintains the belief graph
 - `sdk/` - Python package (`crux-sdk`) with WorldModel API
-- `hooks/` - Claude Code integration (SessionStart, PreToolUse, PostToolUse)
+- `sdk/crux/hooks/` - Claude Code integration (SessionStart, PreToolUse, PostToolUse), installed as `crux-hook-init`, `crux-hook-pre`, `crux-hook-post`
 
 ## Release Process
 
@@ -69,7 +69,7 @@ Before committing changes, verify:
 
 To test SessionStart hook output:
 ```bash
-echo '{"cwd": "/path/to/project"}' | python3 hooks/crux-init.py
+echo '{"cwd": "/path/to/project"}' | crux-hook-init
 ```
 
 To test stale belief surfacing in a new session, ask: "What context did you receive at session start?"

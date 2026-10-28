@@ -2,6 +2,10 @@
 
 Agentic knowledge versioning. `git` for what an AI agent believes about the world.
 
+## Status: shelved
+
+Crux works as built, but I stopped developing it. The core case it was built for, an agent editing a file that changed since it last read it, is already handled inside Claude Code, which tracks reads and refuses an edit to a file modified since the last read. The cases left over were either too small to matter or ones Crux can't see. The details are in [Known limitations](#known-limitations). The code stays up as a reference.
+
 ## What it does
 
 An agent reads files, runs commands, checks APIs. Each of those creates a belief -- a versioned snapshot of what the agent thinks reality looks like. When reality changes out from under it, Crux diffs the versions and tells the agent what went stale.
@@ -10,9 +14,9 @@ Git tracks file versions across commits. Crux tracks belief versions across agen
 
 The part that goes beyond versioning is the dependency graph. Git doesn't know that `utils.py` depends on `config.json`. Crux does. So when `config.json` changes, it doesn't just tell you that file changed -- it tells you every downstream belief that's now suspect.
 
-Without Crux, an agent that read `config.json` at step 5 and wrote code based on it at step 10 has no way to know that `config.json` was changed at step 8 by a git pull. With Crux, the agent gets told immediately.
+Without Crux, an agent that read `config.json` at step 5 and wrote code based on it at step 10 has no way to know that `config.json` was changed at step 8 by a git pull. With Crux, the agent gets told the next time it observes `config.json`, or once the belief's TTL expires. Crux has no file watcher, so it learns about a change only when something re-observes it.
 
-## Why it matters
+## The use case it was built for
 
 **Session 1: Planning**
 - You ask your agent to plan a feature
@@ -34,7 +38,7 @@ Without Crux, an agent that read `config.json` at step 5 and wrote code based on
 - Writes code against old structure
 - Fails at compile time (if lucky) or introduces subtle bugs (if not)
 
-Crux turns "unknown unknowns" into "known unknowns." The agent doesn't guess what might have changed — it's told exactly what changed and what depends on it.
+**What actually happens:** the SessionStart hook doesn't re-hash files, so in Session 2 it can't tell that `src/types.rs` changed. It reports every belief past its TTL as uncertain, which after a lunch break is all of them. Re-hashing tracked files at session start would fix this, and it's the first thing to build if Crux is ever picked back up.
 
 ## Philosophy
 
@@ -48,7 +52,7 @@ This is the entire model. Observe, believe, falsify, update. The belief graph is
 
 - **daemon/** -- Rust binary that maintains the belief graph, event log, and query engine. Communicates over a Unix socket with MessagePack framing.
 - **sdk/** -- Python package (`crux`) with `WorldModel`, `CruxInterceptor`, and a `crux-observe` CLI.
-- **hooks/** -- Claude Code integration. PreToolUse hook surfaces stale beliefs before tool calls. PostToolUse hook registers Read/Write/Edit/Bash as observations. SessionStart hook manages the daemon lifecycle.
+- **sdk/crux/hooks/** -- Claude Code integration, installed as the `crux-hook-init`, `crux-hook-pre`, and `crux-hook-post` commands. PreToolUse hook surfaces stale beliefs before tool calls. PostToolUse hook registers Read/Write/Edit/Bash as observations. SessionStart hook manages the daemon lifecycle.
 - **bench/** -- Benchmark harness with 17 scenarios (8 core + 9 adversarial) that measure agent performance with and without Crux.
 
 ## Quick start
@@ -67,53 +71,15 @@ make build && make install
 
 ### Set up Claude Code integration
 
-Add the following to your project's `.claude/settings.json`. Replace `/path/to/crux` with the absolute path to your Crux checkout.
+Run this in your project:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/crux/hooks/crux-init.py",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Read|Write|Edit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/crux/hooks/crux-pre.py",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Read|Write|Edit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/crux/hooks/crux-hook.py",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
 ```
-_If you want a practical example, check out this repo's /claude/settings.json_ (｡•̀ᴗ-)✧
+crux-setup
+```
 
-The SessionStart hook starts a single long-lived daemon on `/tmp/crux.sock` (or resumes the existing one) and immediately surfaces any stale beliefs from previous sessions -- so the agent knows what assumptions are invalid before it does anything. The PreToolUse hook surfaces stale beliefs and pending invalidations before each tool call. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. All sessions share the same daemon, which is how cross-session belief persistence works.
+It writes the SessionStart, PreToolUse, and PostToolUse hooks into `.claude/settings.json`, pointing at the `crux-hook-init`, `crux-hook-pre`, and `crux-hook-post` commands that `pip install crux-sdk` puts on your PATH. It's safe to run more than once. This repo's own `.claude/settings.json` shows the result.
+
+The SessionStart hook starts a single long-lived daemon on `/tmp/crux.sock` (or resumes the existing one) and surfaces stale beliefs from previous sessions. Without a re-hash, "stale" here mostly means past its TTL (see [Known limitations](#known-limitations)). The PreToolUse hook surfaces stale beliefs and pending invalidations before each tool call. The PostToolUse hook registers every file read, write, edit, and shell command as an observation. All sessions share the same daemon, which is how cross-session belief persistence works.
 
 The daemon shuts itself down after 30 minutes of inactivity (configurable via `--idle-timeout`).
 
@@ -281,6 +247,17 @@ The benchmark includes adversarial scenarios that show where Crux hurts or can't
 
 Overall: Crux MCI 0.882, baseline 0.353, improvement +0.529.
 
+**Read these numbers with care.** The agent is a script I wrote, running tasks I wrote. It checks Crux's warnings because it was programmed to, so the score shows the scripts behave as designed, not that a real model does better with Crux. A real evaluation would run an actual LLM agent on the same tasks with and without the hooks.
+
+## Known limitations
+
+- **No change detection between observations.** There's no file watcher, so a change is caught only when the file is observed again or its TTL runs out.
+- **Session-start warnings are mostly TTL noise.** Files aren't re-hashed at session start, so after a break almost every belief shows up as uncertain. Agents learn to ignore noisy warnings.
+- **The default auto-edge doesn't cascade.** Hook-created edges use weight 0.9, so one hop gives 1.0 × 0.9 × 0.7 = 0.63, which is above the 0.6 cut-off for uncertain. The dependent belief stays valid. Uncertain beliefs also don't propagate further; only invalidated ones do.
+- **The decay constants are arbitrary.** The 0.7 decay and the 0.6 / 0.3 thresholds were picked, not measured.
+- **Overlap with Claude Code.** Within a session, Claude Code already blocks edits to files changed since they were read, which covers Crux's main demo.
+- **Shared state.** All sessions share one daemon on `/tmp/crux.sock`, and only one branch can be active at a time.
+
 ## Architecture
 
 ```mermaid
@@ -348,8 +325,8 @@ graph LR
 
 ```mermaid
 graph TB
-    CC[Claude Code] -->|PreToolUse hook| PRE[crux-pre.py]
-    CC -->|PostToolUse hook| H[crux-hook.py]
+    CC[Claude Code] -->|PreToolUse hook| PRE[crux-hook-pre]
+    CC -->|PostToolUse hook| H[crux-hook-post]
     PRE -->|msgpack over Unix socket| D[crux-daemon]
     H -->|msgpack over Unix socket| D
     D --> L[(Event Log<br/>~/.crux/runs/)]
